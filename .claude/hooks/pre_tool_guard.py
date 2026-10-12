@@ -31,7 +31,7 @@ START = re.compile(r'(\./run\.sh|server/run\.py)\b')
 USER_PORT = re.compile(r'(127\.0\.0\.1|localhost):8090\b')
 MUTATING = re.compile(r'-X\s*(POST|PUT|PATCH|DELETE)|--data\b|-d\s|--request\s+(POST|PUT|PATCH|DELETE)')
 WRITES = re.compile(r'\bsed\s+(-\w*\s+)*-i|\btee\b|\b(cp|mv|rm|rmdir|truncate)\s|(^|[^0-9&])>{1,2}\s*[^&\s]')
-PROTECTED_IN_CMD = re.compile(r'(^|[\s"\'=])(\./)?(data|\.venv)/|/(stele_hsrw|__Project_Stele|__Project_HSRW_Stele)/(data|\.venv)/|secret_key|\bcms\.db')
+PROTECTED_IN_CMD = re.compile(r'(^|[\s"\'=])(\./)?(data|\.venv)/|/(stele_hsrw|__project_Stele|__project_hsrw_stele)/(data|\.venv)/|secret_key|\bcms\.db')
 VENV_EXE = re.compile(r'(\./)?\.venv/bin/\S+')  # Programmaufruf aus .venv ist kein Schreibzugriff
 GIT_RISKY = re.compile(r'\bgit\s+push\b[^;&|]*(--force\b|-f\b)|--no-verify\b|\bgit\s+add\s+(-A|--all|\.)(\s|$)')
 MESSAGE = re.compile(r'''(-m|--message)(\s+|=)("(?:[^"\\]|\\.)*"|'[^']*')''', re.S)  # Commit-Texte

@@ -1,2 +1,2 @@
-- [Stele CMS umgezogen](stele-cms-moved.md) — Stele CMS = Projekt HSRW_Stele in ~/__Project_HSRW_Stele (Repo lu4k87/stele_hsrw, Port 8090; alter Klon ~/__Project_Stele gelöscht); Tests nur mit eigener Instanz 18090–18099
+- [Stele CMS umgezogen](stele-cms-moved.md) — Stele CMS = Projekt HSRW_Stele in ~/__project_hsrw_stele (Repo lu4k87/stele_hsrw, Port 8090; alter Klon ~/__project_Stele gelöscht); Tests nur mit eigener Instanz 18090–18099
 - [Stele Zielumgebung](stele-deployment-target.md) — Server Windows 11 oder Linux (IT fragen), Stele Windows, interne CA, nur Hochschulnetz/VPN; Checkliste offen
