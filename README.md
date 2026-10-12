@@ -20,8 +20,8 @@ In fünf Minuten vom Klonen bis zur ersten eigenen Folie auf der (simulierten) S
 1. **Holen und starten** (Python ≥ 3.10; beim ersten Start wird `.venv` angelegt):
 
    ```bash
-   git clone git@github.com:lu4k87/__Project_HSRW_Stele.git
-   cd __Project_HSRW_Stele
+   git clone git@github.com:lu4k87/stele_hsrw.git
+   cd stele_hsrw
    ./run.sh
    ```
 
@@ -293,8 +293,8 @@ Voraussetzungen:
 - Chrome für den Player
 
 ```bash
-git clone git@github.com:lu4k87/__Project_HSRW_Stele.git
-cd __Project_HSRW_Stele
+git clone git@github.com:lu4k87/stele_hsrw.git
+cd stele_hsrw
 ./run.sh
 ```
 
