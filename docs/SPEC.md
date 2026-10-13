@@ -66,7 +66,10 @@ CMS_STELE_KIOSK/
 | `STELECMS_DATA` | `<repo>/data` | Datenordner (Tests: eigener Temp-Ordner!) |
 | `STELECMS_SECRET_KEY` | – | sonst zufällig erzeugt und in `data/secret_key` gespeichert |
 | `STELECMS_BACKGROUND` | `1` | `0` = keine Hintergrund-Threads (Tests) |
-| `STELECMS_SEED_DEMO` | `1` | Demo-Inhalte bei neuer DB anlegen |
+| `STELECMS_SEED_DEMO` | `0` | `1` = bekannte Demo-Konten und Demo-Inhalte bei neuer DB anlegen |
+| `STELECMS_HTTPS` | `0` | Sichere Cookies + HSTS hinter einem HTTPS-Reverse-Proxy |
+| `STELECMS_ALLOW_INSECURE_LAN` | `0` | Explizite Ausnahme für HTTP mit Netzwerk-Bind-Adresse |
+| `STELECMS_OUTBOUND_PRIVATE_HOSTS` | – | Exakte, kommagetrennte Freigabeliste privater Hosts für ausgehende Abrufe |
 
 ### URL-Aufteilung
 | Pfad | Inhalt | Zugriff |
@@ -332,7 +335,7 @@ Der Server füllt fehlende Schlüssel immer mit Standardwerten auf (`merge_defau
   "lockout_minutes": 5,
   "password_min_length": 8,
   "dev_login_enabled": true,
-  "upload_max_mb": 1024,
+  "upload_max_mb": 128,
   "auto_transcode": true,
   "offline_after_s": 45,
   "retention_days": 30,
@@ -610,7 +613,7 @@ Content = {
 }
 usages = [{"type": "presentation"|"design"|"touch_menu"|"content", "id", "name", "published": bool}]
 ```
-- **Upload:** erlaubt JPEG, PNG, WebP, GIF, MP4, WebM, MOV, MKV, PDF – Prüfung über den **Inhalt** (Pillow `verify`, ffprobe, `%PDF-` + pdfinfo), nicht nur Endung. SVG und alles andere → Fehler „Dateityp nicht unterstützt (…). Erlaubt: …“. Größe ≤ `upload_max_mb`; Anfrage insgesamt höchstens 10 256 MB (Grenze des Webservers). Weniger freier Speicher als Anfrage + 1 GB → 507 `insufficient_storage`. Titel = Dateiname ohne Endung.
+- **Upload:** erlaubt JPEG, PNG, WebP, GIF, MP4, WebM, MOV, MKV, PDF – Prüfung über den **Inhalt** (Pillow `verify`, ffprobe, `%PDF-` + pdfinfo), nicht nur Endung. SVG und alles andere → Fehler „Dateityp nicht unterstützt (…). Erlaubt: …“. Größe ≤ `upload_max_mb` (höchstens 128 MB); Anfrage insgesamt höchstens 129 MB (Waitress-Grenze bereits vor der Anmeldung). Weniger freier Speicher als Anfrage + 1 GB → 507 `insufficient_storage`. Titel = Dateiname ohne Endung.
 - **Ausgehende Abrufe** (Webseiten-Prüfung, RSS-Feeds): keine Ziele auf dem Server selbst (Loopback), Link-Local (z. B. 169.254.169.254) oder unspezifiziert – auch nicht über Weiterleitungen; LAN-Adressen erlaubt. Gesamtzeit begrenzt (Prüfung 10 s, Feed 30 s).
 - **Dateien:** `data/media/<uid>/original.<ext>`; Bild: `display.jpg|png` (max. 2160 px lange Kante, EXIF-Drehung angewandt, PNG nur bei Transparenz, GIF bleibt Original), `thumb.webp` (max. 480 px). Video: `poster.jpg` (Einzelbild bei min(1 s, Dauer/3)), `thumb.webp`, `video.mp4` wenn umgewandelt/umgepackt. PDF: `pages/p001.png` … (1080 px breit, max. 100 Seiten), `thumb.webp`.
 - **Video-Job:** ffprobe → Dauer, Größe, Codec. Browser-tauglich = Container mp4/webm/mov mit H.264/VP8/VP9/AV1 und Audio AAC/Opus/Vorbis/MP3/keins. Sonst (bei `auto_transcode`) ffmpeg → H.264/AAC MP4 `-movflags +faststart -pix_fmt yuv420p -preset veryfast -crf 21`, Fortschritt über `-progress pipe:1` → `contents.progress`. Kompatible MP4 ohne faststart → umpacken (`-c copy -movflags +faststart`).

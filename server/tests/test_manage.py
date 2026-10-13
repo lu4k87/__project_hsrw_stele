@@ -17,7 +17,8 @@ import manage  # noqa: E402
 
 @pytest.fixture
 def overrides(tmp_path):
-    return {"DATA_DIR": tmp_path / "data", "SEED_DEMO": False, "PASSWORD_HASH_METHOD": FAST_HASH}
+    return {"DATA_DIR": tmp_path / "data", "SEED_DEMO": False, "PASSWORD_HASH_METHOD": FAST_HASH,
+            "TESTING": True}
 
 
 def run(overrides, *argv):

@@ -66,7 +66,7 @@ class Client:
 @pytest.fixture
 def app(tmp_path):
     return create_app({"DATA_DIR": tmp_path / "data", "BACKGROUND": False, "SEED_DEMO": False,
-                       "PASSWORD_HASH_METHOD": FAST_HASH})
+                       "PASSWORD_HASH_METHOD": FAST_HASH, "TESTING": True})
 
 
 @pytest.fixture

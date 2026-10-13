@@ -206,7 +206,7 @@ def web_app(tmp_path):
         (web / rel).parent.mkdir(parents=True, exist_ok=True)
         (web / rel).write_text(text)
     return create_app({"DATA_DIR": tmp_path / "data", "BACKGROUND": False, "SEED_DEMO": False,
-                       "PASSWORD_HASH_METHOD": FAST_HASH, "WEB_DIR": web})
+                       "PASSWORD_HASH_METHOD": FAST_HASH, "WEB_DIR": web, "TESTING": True})
 
 
 def test_static_delivery_and_headers(web_app):
@@ -226,6 +226,27 @@ def test_static_delivery_and_headers(web_app):
     assert "frame-src *" in r.headers["Content-Security-Policy"]
     r = c.get("/player/sw.js")
     assert r.headers["Service-Worker-Allowed"] == "/player/" and r.headers["Cache-Control"] == "no-cache"
+
+
+def test_https_sets_secure_cookie_and_hsts(tmp_path):
+    app = create_app({"DATA_DIR": tmp_path / "https-data", "BACKGROUND": False, "SEED_DEMO": False,
+                      "PASSWORD_HASH_METHOD": FAST_HASH, "TESTING": True, "HTTPS": True})
+    response = app.test_client().post('/api/auth/login', json={'username': 'admin', 'password': 'admin123'})
+    assert response.status_code == 200
+    assert 'Secure' in response.headers['Set-Cookie']
+    assert response.headers['Strict-Transport-Security'].startswith('max-age=31536000')
+
+
+def test_production_seed_without_demo_has_no_known_accounts(tmp_path):
+    app = create_app({"DATA_DIR": tmp_path / "prod-data", "BACKGROUND": False, "SEED_DEMO": False,
+                      "PASSWORD_HASH_METHOD": FAST_HASH, "TESTING": False})
+    conn = sqlite3.connect(app.config['DB_PATH'])
+    try:
+        assert conn.execute('SELECT COUNT(*) FROM users').fetchone()[0] == 0
+        value = conn.execute("SELECT value FROM settings WHERE key = 'dev_login_enabled'").fetchone()[0]
+        assert value == 'false'
+    finally:
+        conn.close()
 
 
 def test_player_key_cookie(web_app):

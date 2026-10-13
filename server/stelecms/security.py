@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import hmac
 import ipaddress
+import os
 import secrets
 import socket
 import string
@@ -103,6 +104,8 @@ def apply_security_headers(resp):
     h = resp.headers
     h.setdefault("X-Content-Type-Options", "nosniff")
     h.setdefault("Referrer-Policy", "same-origin")
+    if current_app.config.get("HTTPS"):
+        h.setdefault("Strict-Transport-Security", "max-age=31536000; includeSubDomains")
     path = request.path
     if path.startswith("/media/"):
         # Mediendateien: nur Einbettung auf gleicher Herkunft
@@ -182,12 +185,18 @@ def is_loopback(ip: str | None = None) -> bool:
 
 # ------------------------------------------------------------------ Ausgehende HTTP-Abrufe (Webseiten-Prüfung, Feeds)
 
-def _blocked_ip(addr: str) -> bool:
+def _private_host_allowed(host: str) -> bool:
+    allowed = {item.strip().lower().rstrip('.') for item in
+               os.environ.get('STELECMS_OUTBOUND_PRIVATE_HOSTS', '').split(',') if item.strip()}
+    return host.lower().rstrip('.') in allowed
+
+
+def _blocked_ip(addr: str, *, allow_private: bool = False) -> bool:
     ip = ipaddress.ip_address(addr.split("%", 1)[0])
     if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped:
         ip = ip.ipv4_mapped
-    # Server selbst und Cloud-Metadaten; LAN bleibt erlaubt (Intranet-Seiten sind übliche Inhalte)
-    return ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved
+    return (ip.is_loopback or ip.is_link_local or ip.is_unspecified or ip.is_multicast or ip.is_reserved
+            or (ip.is_private and not allow_private))
 
 
 def check_outbound_host(url: str) -> None:
@@ -203,8 +212,9 @@ def check_outbound_host(url: str) -> None:
         infos = socket.getaddrinfo(host, None)
     except (socket.gaierror, UnicodeError) as exc:
         raise ValueError(f"Host nicht auflösbar: {host}") from exc
-    if any(_blocked_ip(info[4][0]) for info in infos):
-        raise ValueError("Adressen des Servers selbst werden nicht abgerufen.")
+    allow_private = _private_host_allowed(host)
+    if any(_blocked_ip(info[4][0], allow_private=allow_private) for info in infos):
+        raise ValueError("Lokale, private oder reservierte Adressen werden nicht abgerufen.")
 
 
 class _CheckedRedirects(urllib.request.HTTPRedirectHandler):

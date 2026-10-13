@@ -332,7 +332,10 @@ cd stele_hsrw
 | `STELECMS_PORT` | `8090` | Port |
 | `STELECMS_DATA` | `./data` | Datenbank, Medien, Screenshots, Schlüssel |
 | `STELECMS_BACKGROUND` | `1` | `0` = ohne Hintergrunddienste (Tests) |
-| `STELECMS_SEED_DEMO` | `1` | Demo-Inhalte bei neuer Datenbank |
+| `STELECMS_SEED_DEMO` | `0` | `1` = bekannte Demo-Konten und Demo-Inhalte bei neuer Datenbank |
+| `STELECMS_HTTPS` | `0` | `1` hinter einem HTTPS-Reverse-Proxy: sichere Cookies und HSTS |
+| `STELECMS_ALLOW_INSECURE_LAN` | `0` | Bewusste Ausnahme für unverschlüsseltes HTTP bei einer Netzwerk-Bind-Adresse |
+| `STELECMS_OUTBOUND_PRIVATE_HOSTS` | – | Kommagetrennte, exakt erlaubte private Hosts für Web-Inhalte/Feeds |
 
 Beispiel für eine zweite Instanz mit eigenen Daten:
 
@@ -344,7 +347,7 @@ STELECMS_PORT=8091 STELECMS_DATA=/tmp/stele-test ./run.sh
 
 ![Anmeldung mit Schnellanmeldung im Testbetrieb](docs/img/login.png)
 
-- Schnellanmeldung mit Demo-Konten: nur im Testbetrieb und nur von localhost
+- Schnellanmeldung mit Demo-Konten: nur mit `STELECMS_SEED_DEMO=1`, nur im Testbetrieb und nur von localhost
 
 | Konto | Passwort | Rolle |
 |---|---|---|
@@ -363,6 +366,8 @@ Eigenes Administratorkonto und Passwörter auf der Kommandozeile:
 
 > **Vor dem Netzwerkbetrieb:** Demo-Konten löschen oder deaktivieren und die Schnellanmeldung unter
 > **Einstellungen → Sicherheit** abschalten.
+
+Ohne Demo-Seed wird das erste Administratorkonto sicher per `server/manage.py create-admin` angelegt. Eine Netzwerk-Bind-Adresse wird nur mit `STELECMS_HTTPS=1` oder der ausdrücklichen Ausnahme `STELECMS_ALLOW_INSECURE_LAN=1` akzeptiert. Ausgehende Prüfungen blockieren private Netze standardmäßig; benötigte Intranet-Hosts werden einzeln über `STELECMS_OUTBOUND_PRIVATE_HOSTS` freigegeben. Uploads sind vor der Anmeldung global auf 129 MB Request-Größe und fachlich auf 128 MB je Datei begrenzt.
 
 ## 5. Stele einrichten
 

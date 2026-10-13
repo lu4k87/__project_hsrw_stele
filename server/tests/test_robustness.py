@@ -157,6 +157,15 @@ def test_outbound_requests_to_server_itself_are_blocked(url):
     assert media.check_url(url)["ok"] is False
 
 
-def test_outbound_lan_is_allowed(monkeypatch):
+def test_outbound_lan_is_blocked_by_default(monkeypatch):
     monkeypatch.setattr(security.socket, "getaddrinfo", lambda host, port: [(2, 1, 6, "", ("192.168.1.20", 0))])
+    with pytest.raises(ValueError):
+        security.check_outbound_host("http://intranet.local/")
+
+
+def test_outbound_lan_requires_exact_allowlist(monkeypatch):
+    monkeypatch.setattr(security.socket, "getaddrinfo", lambda host, port: [(2, 1, 6, "", ("192.168.1.20", 0))])
+    monkeypatch.setenv('STELECMS_OUTBOUND_PRIVATE_HOSTS', 'intranet.local')
     security.check_outbound_host("http://intranet.local/")
+    with pytest.raises(ValueError):
+        security.check_outbound_host("http://other.local/")

@@ -34,9 +34,10 @@ def create_app(overrides: dict | None = None) -> Flask:
         SESSION_COOKIE_NAME="stelecms_session",
         SESSION_COOKIE_HTTPONLY=True,
         SESSION_COOKIE_SAMESITE="Lax",
-        SESSION_COOKIE_SECURE=bool(cfg.get("SESSION_COOKIE_SECURE", False)),  # erst mit HTTPS
+        SESSION_COOKIE_SECURE=bool(cfg.get("HTTPS", False)),
         MAX_CONTENT_LENGTH=None,          # je Anfrage in before_request gesetzt
         JSON_SORT_KEYS=False,
+        PREFERRED_URL_SCHEME="https" if cfg.get("HTTPS") else "http",
     )
     app.json.ensure_ascii = False
     app.json.sort_keys = False

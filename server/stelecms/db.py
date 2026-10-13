@@ -21,6 +21,10 @@ def connect(path) -> sqlite3.Connection:
     conn.execute("PRAGMA busy_timeout=5000")
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
+    try:
+        Path(path).chmod(0o600)
+    except OSError:
+        pass
     return conn
 
 

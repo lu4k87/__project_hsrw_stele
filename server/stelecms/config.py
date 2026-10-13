@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import ipaddress
 import secrets
 from pathlib import Path
 
@@ -28,7 +29,9 @@ def load_config(overrides: dict | None = None) -> dict:
         "DATA_DIR": data_dir,
         "SECRET_KEY": os.environ.get("STELECMS_SECRET_KEY") or None,
         "BACKGROUND": _env_flag("STELECMS_BACKGROUND"),
-        "SEED_DEMO": _env_flag("STELECMS_SEED_DEMO"),
+        "SEED_DEMO": _env_flag("STELECMS_SEED_DEMO", "0"),
+        "HTTPS": _env_flag("STELECMS_HTTPS", "0"),
+        "ALLOW_INSECURE_LAN": _env_flag("STELECMS_ALLOW_INSECURE_LAN", "0"),
         "WEB_DIR": WEB_DIR,
         # Passwort-Hash-Verfahren (werkzeug); Tests nutzen ein schnelles Verfahren.
         "PASSWORD_HASH_METHOD": os.environ.get("STELECMS_PASSWORD_HASH", "scrypt"),
@@ -47,7 +50,12 @@ def load_config(overrides: dict | None = None) -> dict:
 
 def ensure_dirs(cfg: dict) -> None:
     for key in ("DATA_DIR", "MEDIA_DIR", "SCREENSHOT_DIR", "BACKUP_DIR"):
-        Path(cfg[key]).mkdir(parents=True, exist_ok=True)
+        path = Path(cfg[key])
+        path.mkdir(parents=True, exist_ok=True)
+        try:
+            path.chmod(0o700)
+        except OSError:
+            pass
     (Path(cfg["MEDIA_DIR"]) / ".tmp").mkdir(exist_ok=True)
 
 
@@ -57,6 +65,10 @@ def load_secret_key(cfg: dict) -> str:
         return cfg["SECRET_KEY"]
     path = Path(cfg["DATA_DIR"]) / "secret_key"
     if path.exists():
+        try:
+            path.chmod(0o600)
+        except OSError:
+            pass
         key = path.read_text(encoding="utf-8").strip()
         if key:
             return key
@@ -67,3 +79,12 @@ def load_secret_key(cfg: dict) -> str:
     except OSError:
         pass
     return key
+
+
+def is_loopback_host(host: str) -> bool:
+    if host.lower() == "localhost":
+        return True
+    try:
+        return ipaddress.ip_address(host).is_loopback
+    except ValueError:
+        return False

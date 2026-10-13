@@ -72,7 +72,7 @@ export default async function mount(root, ctx) {
   c.lockout_minutes = numberInput({ value: saved.lockout_minutes, min: 1, max: 1440, unit: 'Min.' });
   c.password_min_length = numberInput({ value: saved.password_min_length, min: 6, max: 64, unit: 'Zeichen' });
   c.dev_login_enabled = switchToggle({ label: 'Schnellanmeldung mit Demo-Konten (Testbetrieb)', hint: 'Anmeldung per Klick auf ein Demo-Konto – nur von diesem Rechner aus (localhost).', checked: !!saved.dev_login_enabled });
-  c.upload_max_mb = numberInput({ value: saved.upload_max_mb, min: 1, max: 10240, unit: 'MB' });
+  c.upload_max_mb = numberInput({ value: saved.upload_max_mb, min: 1, max: 128, unit: 'MB' });
   c.auto_transcode = switchToggle({ label: 'Videos automatisch umwandeln', hint: 'Wandelt Videos beim Hochladen in ein Format um, das die Stele zuverlässig abspielt (H.264/MP4). Dauert je nach Länge einige Minuten.', checked: !!saved.auto_transcode });
   c.offline_after_s = numberInput({ value: saved.offline_after_s, min: 20, max: 3600, unit: 's' });
   c.retention_days = numberInput({ value: saved.retention_days, min: 1, max: 3650, unit: 'Tage' });
@@ -95,7 +95,7 @@ export default async function mount(root, ctx) {
     stale_after_days: () => num(c.stale_after_days),
   };
   function num(ctl) { const v = ctl.input.value; return v === '' ? null : Number(v); }
-  const RANGES = { default_slide_duration_s: [2, 600], session_idle_minutes: [5, 1440], lockout_attempts: [3, 20], lockout_minutes: [1, 1440], password_min_length: [6, 64], upload_max_mb: [1, 10240], offline_after_s: [20, 3600], retention_days: [1, 3650], stale_after_days: [1, 365] };
+  const RANGES = { default_slide_duration_s: [2, 600], session_idle_minutes: [5, 1440], lockout_attempts: [3, 20], lockout_minutes: [1, 1440], password_min_length: [6, 64], upload_max_mb: [1, 128], offline_after_s: [20, 3600], retention_days: [1, 3650], stale_after_days: [1, 365] };
 
   function changes() {
     const out = {};
@@ -133,7 +133,7 @@ export default async function mount(root, ctx) {
     card({ title: 'Testbetrieb', icon: 'info', body: h('div', { class: 'form' }, c.dev_login_enabled, devWarn) }));
 
   panels.media = card({ title: 'Hochladen und Verarbeitung', icon: 'upload', body: h('div', { class: 'form' },
-    f('Maximale Dateigröße je Upload', 'upload_max_mb', c.upload_max_mb, { hint: 'Größere Dateien werden abgelehnt. 1024 MB = 1 GB.' }),
+    f('Maximale Dateigröße je Upload', 'upload_max_mb', c.upload_max_mb, { hint: 'Größere Dateien werden abgelehnt. Höchstens 128 MB.' }),
     c.auto_transcode) });
 
   panels.operation = card({ title: 'Überwachung und Aufbewahrung', icon: 'activity', body: h('div', { class: 'form' },

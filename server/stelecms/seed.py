@@ -1,7 +1,7 @@
 """Erstbefüllung einer neuen Datenbank (SPEC §6.2).
 
-Immer: Standardrollen, Demo-Konten (Testbetrieb) und das Design „Standard“.
-Mit `demo=True` (STELECMS_SEED_DEMO != 0) zusätzlich Demo-Inhalte, Touch-Menü, Präsentationen, Stele, Zeitplan.
+Immer: Standardrollen und das Design „Standard“.
+Mit `demo=True` (STELECMS_SEED_DEMO != 0) zusätzlich Demo-Konten und -Inhalte.
 """
 from __future__ import annotations
 
@@ -59,16 +59,20 @@ def seed(app, conn, demo: bool = True) -> None:
             conn.executemany("INSERT INTO role_permissions(role_id, permission) VALUES (?, ?)",
                              [(rid, p) for p in perms])
         user_ids = {}
-        for username, password, display, role in USERS:
-            user_ids[username] = dbm.insert(conn, "users", {
-                "username": username, "display_name": display, "email": "", "password_hash": hash_password(password),
-                "role_id": role_ids[role], "is_active": 1, "is_demo": 1, "must_change_password": 0,
-                "created_at": now, "updated_at": now})
+        if demo or app.config.get("TESTING"):
+            for username, password, display, role in USERS:
+                user_ids[username] = dbm.insert(conn, "users", {
+                    "username": username, "display_name": display, "email": "", "password_hash": hash_password(password),
+                    "role_id": role_ids[role], "is_active": 1, "is_demo": 1, "must_change_password": 0,
+                    "created_at": now, "updated_at": now})
+        owner = user_ids.get("admin")
         design_id = dbm.insert(conn, "designs", {
-            "name": "Standard", "config": dbm.jdumps(_standard_design()), "created_by": user_ids["admin"],
-            "updated_by": user_ids["admin"], "created_at": now, "updated_at": now})
-        appsettings.save_settings(conn, {"default_design_id": design_id})
-    log.info("Neue Datenbank: Rollen, Demo-Konten und Design „Standard“ angelegt.")
+            "name": "Standard", "config": dbm.jdumps(_standard_design()), "created_by": owner,
+            "updated_by": owner, "created_at": now, "updated_at": now})
+        appsettings.save_settings(conn, {"default_design_id": design_id,
+                                         "dev_login_enabled": bool(demo or app.config.get("TESTING"))})
+    log.info("Neue Datenbank: Rollen%s und Design „Standard“ angelegt.",
+             ", Demo-Konten" if user_ids else "")
     if demo:
         try:
             _seed_demo(app, conn, user_ids, design_id)
@@ -256,15 +260,15 @@ def _seed_demo(app, conn, users: dict, design_id: int) -> None:
 
 
 def log_player_links(app) -> None:
-    """Player-Links aller Stelen ins Log schreiben (nur im Testbetrieb, der Schlüssel ist geheim)."""
+    """Vorhandene Player nennen, ohne ihren geheimen Schlüssel ins Log zu schreiben."""
     conn = dbm.connect(app.config["DB_PATH"])
     try:
         if not appsettings.get_settings(conn)["dev_login_enabled"]:
             return
         host = app.config["HOST"]
         shown = "127.0.0.1" if host in ("0.0.0.0", "::", "") else host
-        for s in dbm.rows(conn, "SELECT name, player_key FROM steles ORDER BY id"):
-            log.info("Player-Link %s: http://%s:%s/player/?key=%s", s["name"], shown, app.config["PORT"],
-                     s["player_key"])
+        for s in dbm.rows(conn, "SELECT name FROM steles ORDER BY id"):
+            log.info("Player %s: http://%s:%s/player/ (Schlüssel nur im Adminbereich)",
+                     s["name"], shown, app.config["PORT"])
     finally:
         conn.close()

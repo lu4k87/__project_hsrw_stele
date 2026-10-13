@@ -14,7 +14,7 @@ DEFAULT_SETTINGS = {
     "lockout_minutes": 5,
     "password_min_length": 8,
     "dev_login_enabled": True,
-    "upload_max_mb": 1024,
+    "upload_max_mb": 128,
     "auto_transcode": True,
     "offline_after_s": 45,
     "retention_days": 30,
@@ -32,7 +32,7 @@ _INT_RANGES = {
     "lockout_attempts": (3, 20),
     "lockout_minutes": (1, 1440),
     "password_min_length": (6, 64),
-    "upload_max_mb": (1, 10240),
+    "upload_max_mb": (1, 128),
     "offline_after_s": (20, 3600),
     "retention_days": (1, 3650),
     "default_slide_duration_s": (2, 600),
@@ -45,6 +45,7 @@ def get_settings(conn) -> dict:
     for r in conn.execute("SELECT key, value FROM settings").fetchall():
         if r["key"] in result:
             result[r["key"]] = dbm.jloads(r["value"], result[r["key"]])
+    result["upload_max_mb"] = min(int(result["upload_max_mb"]), _INT_RANGES["upload_max_mb"][1])
     return result
 
 
