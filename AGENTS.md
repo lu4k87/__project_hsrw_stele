@@ -76,5 +76,6 @@ Web-CMS für eine digitale Stele (Hochformat 1080 × 1920, Touch, Chrome im Kios
 ### Commit + Push
 - **Nach jeder abgeschlossenen, geprüften Aufgabe** committen und pushen (ohne Nachfrage, Skill `commit`): nur eigene Dateien (`git commit -- <pfade>`), nie `--force`, nie `--no-verify` ohne Auftrag.
 - Stil: Conventional Commits auf Deutsch, `typ(bereich): Beschreibung` – Typen `feat`, `fix`, `docs`, `style`, `refactor`, `test`, `chore`; Bereiche `server`, `admin`, `player`, `agent` (Stelen-Agent und `.claude/`/AGENTS.md), `readme`, `git`.
-- Vor dem Arbeiten `git pull` (nur Fast-Forward), `git status` prüfen; fremde uncommittete Änderungen nicht mitcommitten.
+- Vor jeder Anfrage aktualisiert der globale Prompt-Hook das Repo konfliktfest per `ff_update`; kein manuelles `git pull`.
+  Vor Änderungen `git status` prüfen und fremde uncommittete Änderungen nicht mitcommitten.
 - Am Ende jeder Antwort den Stand in der Chat-ID-Zeile melden: `gepusht <Hash>` oder `nicht committet ⚠️` + Grund als `⚠️`-Zeile (Skill `answer-page`).
