@@ -2,7 +2,7 @@
 // Rechte automatisch markiert), Vergleich aller Rollen. Explizit speichern mit Schutz vor ungespeicherten Änderungen.
 import { h, useStyles, mount as fill } from '../dom.js';
 import { api, ApiError, errorMessage } from '../api.js';
-import { can, session, applySession, loadSession } from '../session.js';
+import { can, isAdmin, session, applySession, loadSession } from '../session.js';
 import { icon } from '../icons.js';
 import { plural } from '../format.js';
 import { page, pageHeader, card, button } from '../ui/page.js';
@@ -109,7 +109,9 @@ export default async function mount(root, ctx) {
 
   function renderMatrix(role) {
     const locked = role.is_admin;
-    const ro = !manage || locked;
+    // §6.3: ohne Administrator-Rolle nur Rollen verwalten, deren Rechte das eigene Konto selbst hat
+    const covered = isAdmin() || (role.effective_permissions || []).every((p) => session.permissions.has(p));
+    const ro = !manage || locked || !covered;
     const draft = locked ? new Set(state.catalog.keys()) : state.draft;
     const eff = closure(draft);
     const saveBar = h('div', { class: 'rol-save', hidden: !isDirty() },
@@ -143,7 +145,7 @@ export default async function mount(root, ctx) {
               implies && !locked ? h('span', { class: 'rol-perm__implies' }, implies) : null)));
       }))));
 
-    const actions = manage && !locked ? menuButton({ label: `Aktionen für Rolle „${role.name}“`, items: [
+    const actions = !ro ? menuButton({ label: `Aktionen für Rolle „${role.name}“`, items: [
       { label: 'Umbenennen / Beschreibung …', icon: 'pencil', onClick: () => editRole(role) },
       { label: 'Als Vorlage kopieren …', icon: 'copy', onClick: () => createRole(role) },
       { separator: true },
@@ -159,6 +161,7 @@ export default async function mount(root, ctx) {
           locked ? h('div', { class: 'alert alert--neutral' }, icon('lock'), h('div', { class: 'alert__body' },
             h('div', { class: 'alert__title' }, 'Geschützte Rolle'),
             h('div', { class: 'alert__text' }, 'Der Administrator hat immer alle Rechte. Name und Rechte lassen sich nicht ändern, die Rolle kann nicht gelöscht werden – so bleibt das System immer verwaltbar.'))) :
+            manage && !covered ? h('div', { class: 'alert alert--neutral' }, icon('eye'), h('div', { class: 'alert__body' }, h('div', { class: 'alert__text' }, 'Nur Ansicht – diese Rolle hat Rechte, die Ihr eigenes Konto nicht hat. Ändern oder löschen kann sie nur, wer diese Rechte selbst hat oder Administrator ist.'))) :
             h('p', { class: 'text-2 text-sm' }, manage
               ? 'Rechte ein- oder ausschalten und anschließend speichern. Manche Rechte bringen andere automatisch mit – diese sind dann als „enthalten“ markiert.'
               : 'Übersicht der Rechte dieser Rolle.'),

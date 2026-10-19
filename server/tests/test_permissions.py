@@ -279,11 +279,87 @@ def test_roles_grant_only_own_permissions(admin, app):
     autor = next(x for x in admin.get("/api/roles").get_json()["items"] if x["name"] == "Autor")
     r = rv.patch(f"/api/roles/{autor['id']}", json={"permissions": autor["permissions"] + ["settings.manage"]})
     assert r.status_code == 403
-    # … vorhandene (auch nicht selbst gehaltene) Rechte behalten und entfernen geht
+    # … und einer Rolle mit Rechten, die man selbst nicht hat, auch keine entziehen (§6.3)
     kept = [k for k in autor["permissions"] if k != "schedule.view"]
     r = rv.patch(f"/api/roles/{autor['id']}", json={"permissions": kept})
-    assert r.status_code == 200 and "schedule.view" not in r.get_json()["permissions"]
+    assert r.status_code == 403 and "content.edit" in r.get_json()["error"]["details"]["missing_permissions"]
+    r = rv.patch(f"/api/roles/{autor['id']}", json={"description": "Übernommen"})
+    assert r.status_code == 403
+    r = rv.patch(f"/api/roles/{roles['Administrator']}", json={"description": "Übernommen"})
+    assert r.status_code == 403 and r.get_json()["error"]["code"] == "forbidden"
+    after = next(x for x in admin.get("/api/roles").get_json()["items"] if x["name"] == "Autor")
+    assert after["permissions"] == autor["permissions"] and after["description"] == autor["description"]
+    # Rolle, deren Rechte man selbst hat: Rechte entziehen geht
+    lesen = next(x for x in admin.get("/api/roles").get_json()["items"] if x["name"] == "Lesen")
+    r = rv.patch(f"/api/roles/{lesen['id']}", json={"permissions": [], "description": "leer"})
+    assert r.status_code == 200 and r.get_json()["permissions"] == []
     assert "settings.manage" not in rv.get("/api/auth/session").get_json()["permissions"]
+
+
+def test_roles_delete_only_with_own_permissions(admin, app, monkeypatch):
+    """Rollen löschen ohne Administrator nur, wenn das eigene Konto alle ihre Rechte hat – auch in der
+    Schreib-Transaktion erneut geprüft (TOCTOU, §6.3)."""
+    from stelecms import db as dbm
+    from stelecms import permissions as perms
+
+    rv_role = admin.post("/api/roles", json={"name": "Rollenpflege",
+                                             "permissions": ["roles.manage", "content.view"]}).get_json()
+    admin.post("/api/users", json={"username": "rollen", "display_name": "RV", "role_id": rv_role["id"],
+                                   "password": "rollen12345", "must_change_password": False})
+    rv = Client(app).login("rollen", "rollen12345")
+    technik = admin.post("/api/roles", json={"name": "Technik", "permissions": ["settings.manage"]}).get_json()
+    r = rv.delete(f"/api/roles/{technik['id']}")
+    assert r.status_code == 403 and r.get_json()["error"]["details"]["missing_permissions"] == ["settings.manage"]
+    lesen = rv.post("/api/roles", json={"name": "Lesen", "permissions": ["content.view"]}).get_json()
+    assert rv.delete(f"/api/roles/{lesen['id']}").status_code == 200
+    # Zwischen erster Prüfung und Transaktion bekommt die Rolle ein fremdes Recht → 403, Rolle bleibt
+    lesen = rv.post("/api/roles", json={"name": "Lesen", "permissions": ["content.view"]}).get_json()
+    real, calls = perms.require_covers, []
+
+    def widened_after_check(conn, role_id, role_is_admin, message):
+        real(conn, role_id, role_is_admin, message)
+        if not calls:
+            other = dbm.connect(app.config["DB_PATH"])
+            other.execute("INSERT INTO role_permissions(role_id, permission) VALUES (?, 'settings.manage')",
+                          (role_id,))
+            other.close()
+        calls.append(role_id)
+
+    monkeypatch.setattr(perms, "require_covers", widened_after_check)
+    r = rv.delete(f"/api/roles/{lesen['id']}")
+    monkeypatch.undo()
+    assert r.status_code == 403 and len(calls) == 1
+    assert any(x["id"] == lesen["id"] for x in admin.get("/api/roles").get_json()["items"])
+    # Administratoren dürfen es
+    assert admin.delete(f"/api/roles/{technik['id']}").status_code == 200
+
+
+def test_roles_update_rechecks_in_transaction(admin, app, monkeypatch):
+    """Rechte der Rolle ändern sich zwischen Prüfung und Schreiben → 409 stale, nichts gespeichert (TOCTOU)."""
+    from stelecms import db as dbm
+    from stelecms.api import roles as api_roles
+
+    rv_role = admin.post("/api/roles", json={"name": "Rollenpflege",
+                                             "permissions": ["roles.manage", "content.view"]}).get_json()
+    admin.post("/api/users", json={"username": "rollen", "display_name": "RV", "role_id": rv_role["id"],
+                                   "password": "rollen12345", "must_change_password": False})
+    rv = Client(app).login("rollen", "rollen12345")
+    lesen = rv.post("/api/roles", json={"name": "Lesen", "permissions": ["content.view"]}).get_json()
+    real = api_roles._check_grantable
+
+    def widened_after_check(keys, old_keys):
+        real(keys, old_keys)
+        other = dbm.connect(app.config["DB_PATH"])
+        other.execute("INSERT INTO role_permissions(role_id, permission) VALUES (?, 'settings.manage')",
+                      (lesen["id"],))
+        other.close()
+
+    monkeypatch.setattr(api_roles, "_check_grantable", widened_after_check)
+    r = rv.patch(f"/api/roles/{lesen['id']}", json={"permissions": []})
+    monkeypatch.undo()
+    assert r.status_code == 409 and r.get_json()["error"]["code"] == "stale"
+    after = next(x for x in admin.get("/api/roles").get_json()["items"] if x["id"] == lesen["id"])
+    assert after["permissions"] == ["content.view", "settings.manage"]
 
 
 def test_role_locked_and_in_use(admin):

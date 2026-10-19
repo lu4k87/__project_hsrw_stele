@@ -16,6 +16,8 @@ from .common import get_or_404, list_response, ok
 bp = Blueprint("api_roles", __name__, url_prefix="/api")
 
 ROLE_LOCKED_MSG = "Die Rolle Administrator hat immer alle Rechte und kann weder umbenannt noch gelöscht werden."
+ADMIN_ROLE_MSG = "Die Rolle Administrator kann nur eine Administratorin oder ein Administrator ändern."
+STALE_MSG = "Die Rechte der Rolle wurden inzwischen geändert. Bitte neu laden und erneut speichern."
 
 
 def serialize_role(conn, r: dict) -> dict:
@@ -131,6 +133,7 @@ def update_role(rid: int):
         if (name and name != role["name"]) or (keys is not None and keys != perms.ALL_KEYS):
             raise ApiError(403, "role_locked", ROLE_LOCKED_MSG)
         keys = None
+    perms.require_covers(conn, rid, role["is_admin"], ADMIN_ROLE_MSG)
     if keys is not None:
         _check_grantable(keys, old_keys)
     changes, details = {}, {}
@@ -146,6 +149,10 @@ def update_role(rid: int):
                                   "removed": [k for k in old_keys if k not in keys]}
     if changes or perm_changed:
         with dbm.transaction(conn):
+            # Prüfungen gegen den Stand in der Schreib-Transaktion wiederholen (TOCTOU)
+            if perms.sort_keys(authm.role_permission_keys(conn, rid)) != old_keys:
+                raise conflict(STALE_MSG, "stale")
+            perms.require_covers(conn, rid, role["is_admin"], ADMIN_ROLE_MSG)
             changes["updated_at"] = timeutil.now_iso()
             dbm.update(conn, "roles", rid, changes)
             if perm_changed:
@@ -164,11 +171,13 @@ def delete_role(rid: int):
     role = get_or_404(conn, "roles", rid)
     if role["is_admin"]:
         raise ApiError(403, "role_locked", ROLE_LOCKED_MSG)
-    count = dbm.scalar(conn, "SELECT COUNT(*) FROM users WHERE role_id = ?", (rid,))
-    if count:
-        raise conflict(f"Die Rolle wird noch von {count} Benutzer{'n' if count != 1 else ''} verwendet. "
-                       "Bitte diesen zuerst eine andere Rolle zuweisen.", "role_in_use", {"user_count": count})
+    perms.require_covers(conn, rid, False, ADMIN_ROLE_MSG)
     with dbm.transaction(conn):
+        perms.require_covers(conn, rid, False, ADMIN_ROLE_MSG)  # Rechte frisch (TOCTOU)
+        count = dbm.scalar(conn, "SELECT COUNT(*) FROM users WHERE role_id = ?", (rid,))
+        if count:
+            raise conflict(f"Die Rolle wird noch von {count} Benutzer{'n' if count != 1 else ''} verwendet. "
+                           "Bitte diesen zuerst eine andere Rolle zuweisen.", "role_in_use", {"user_count": count})
         conn.execute("DELETE FROM roles WHERE id = ?", (rid,))
         audit(conn, "delete", "role", f"hat die Rolle {q(role['name'])} gelöscht", entity_id=rid,
               entity_name=role["name"])

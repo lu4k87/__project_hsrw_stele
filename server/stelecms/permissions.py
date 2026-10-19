@@ -4,7 +4,7 @@ from __future__ import annotations
 from functools import wraps
 
 from . import auth
-from .errors import forbidden
+from .errors import ApiError, forbidden
 
 GROUPS = [
     {"key": "monitoring", "label": "Monitoring"},
@@ -113,6 +113,23 @@ def catalog_groups() -> list[dict]:
 
 
 # ------------------------------------------------------------ Prüfung
+
+MISSING_MSG = ("Konten und Rollen lassen sich nur verwalten, wenn das eigene Konto alle ihre Rechte selbst hat. "
+               "Fehlend: ")
+
+
+def require_covers(conn, role_id: int, role_is_admin, message: str) -> None:
+    """Ohne Administrator-Rolle nur Konten und Rollen verwalten, deren effektive Rechte das eigene Konto selbst
+    hat (§6.3) – sonst ließe sich z. B. das Passwort eines mächtigeren Kontos zurücksetzen oder einer fremden Rolle
+    Rechte entziehen. Administrator: alles; Ziel-Rolle Administrator: nur Administratoren (`message`).
+    Für TOCTOU-Schutz zusätzlich innerhalb der Schreib-Transaktion aufrufen."""
+    if auth.current_user()["role_is_admin"]:
+        return
+    if role_is_admin:
+        raise forbidden(message)
+    missing = sort_keys(set(effective(auth.role_permission_keys(conn, role_id))) - auth.current_permissions())
+    if missing:
+        raise ApiError(403, "forbidden", MISSING_MSG + ", ".join(missing), details={"missing_permissions": missing})
 
 def has(perm: str) -> bool:
     return perm in auth.current_permissions()

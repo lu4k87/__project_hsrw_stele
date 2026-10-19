@@ -8,7 +8,7 @@ from .. import auth as authm
 from .. import db as dbm
 from .. import permissions as perms
 from ..audit import audit, q
-from ..errors import ApiError, conflict, forbidden
+from ..errors import ApiError, conflict
 from ..permissions import require
 from ..security import generate_password, hash_password
 from ..validation import USERNAME_RE, Validator, body, is_int
@@ -33,31 +33,15 @@ def _is_active_admin(user: dict) -> bool:
 
 ADMIN_ROLE_MSG = "Die Rolle Administrator kann nur eine Administratorin oder ein Administrator vergeben."
 ADMIN_ACCOUNT_MSG = "Konten mit der Rolle Administrator kann nur eine Administratorin oder ein Administrator ändern."
-MISSING_MSG = ("Konten und Rollen lassen sich nur verwalten, wenn das eigene Konto alle ihre Rechte selbst hat. "
-               "Fehlend: ")
 LAST_ADMIN_MSG = "Es muss mindestens ein aktives Konto mit der Rolle Administrator bleiben."
 STALE_MSG = "Das Konto wurde inzwischen geändert. Bitte neu laden und erneut speichern."
-
-
-def _require_covers(conn, role_id: int, role_is_admin, message: str) -> None:
-    """Ohne Administrator-Rolle nur Konten und Rollen verwalten, deren effektive Rechte das eigene Konto selbst
-    hat (§6.3) – sonst ließe sich z. B. das Passwort eines mächtigeren Kontos zurücksetzen und das Konto
-    übernehmen. Administrator: alles; Ziel-Rolle Administrator: nur Administratoren (`message`)."""
-    if authm.current_user()["role_is_admin"]:
-        return
-    if role_is_admin:
-        raise forbidden(message)
-    missing = perms.sort_keys(set(perms.effective(authm.role_permission_keys(conn, role_id)))
-                              - authm.current_permissions())
-    if missing:
-        raise ApiError(403, "forbidden", MISSING_MSG + ", ".join(missing), details={"missing_permissions": missing})
 
 
 def _load_covered(conn, uid: int) -> dict:
     """In der Schreib-Transaktion: Ziel-Konto frisch lesen und erneut prüfen – sonst greift die Aktion auf ein
     Konto, das zwischen Prüfung und Schreiben z. B. die Rolle Administrator bekommen hat (CWE-367)."""
     user = _load(conn, uid)
-    _require_covers(conn, user["role_id"], user["role_is_admin"], ADMIN_ACCOUNT_MSG)
+    perms.require_covers(conn, user["role_id"], user["role_is_admin"], ADMIN_ACCOUNT_MSG)
     return user
 
 
@@ -112,9 +96,10 @@ def create_user():
         v.error("password", f"Das Passwort muss mindestens {settings['password_min_length']} Zeichen haben.")
     must_change = v.boolean("must_change_password", default=True)
     v.done()
-    _require_covers(conn, role["id"], role["is_admin"], ADMIN_ROLE_MSG)
+    perms.require_covers(conn, role["id"], role["is_admin"], ADMIN_ROLE_MSG)
     now = timeutil.now_iso()
     with dbm.transaction(conn):
+        perms.require_covers(conn, role["id"], role["is_admin"], ADMIN_ROLE_MSG)  # Rechte der Rolle frisch (TOCTOU)
         uid = dbm.insert(conn, "users", {
             "username": username, "display_name": display_name, "email": email or "",
             "password_hash": hash_password(password), "role_id": role["id"], "is_active": 1, "is_demo": 0,
@@ -147,9 +132,9 @@ def update_user(uid: int):
         v.error("role_id", "Bitte eine Rolle wählen.")
     is_active = v.boolean("is_active")
     v.done()
-    _require_covers(conn, user["role_id"], user["role_is_admin"], ADMIN_ACCOUNT_MSG)
+    perms.require_covers(conn, user["role_id"], user["role_is_admin"], ADMIN_ACCOUNT_MSG)
     if role is not None:
-        _require_covers(conn, role["id"], role["is_admin"], ADMIN_ROLE_MSG)
+        perms.require_covers(conn, role["id"], role["is_admin"], ADMIN_ROLE_MSG)
     role_change = role is not None and role["id"] != user["role_id"]
     deactivate = is_active is False and user["is_active"]
     if uid == me["id"] and role_change:
@@ -171,9 +156,9 @@ def update_user(uid: int):
             fresh = _load(conn, uid)
             if (fresh["role_id"], bool(fresh["is_active"])) != (user["role_id"], bool(user["is_active"])):
                 raise conflict(STALE_MSG, "stale")
-            _require_covers(conn, fresh["role_id"], fresh["role_is_admin"], ADMIN_ACCOUNT_MSG)
+            perms.require_covers(conn, fresh["role_id"], fresh["role_is_admin"], ADMIN_ACCOUNT_MSG)
             if role is not None:
-                _require_covers(conn, role["id"], role["is_admin"], ADMIN_ROLE_MSG)
+                perms.require_covers(conn, role["id"], role["is_admin"], ADMIN_ROLE_MSG)
             if _is_active_admin(fresh) and (deactivate or (role_change and not role["is_admin"])):
                 _require_admin_left(conn, uid)
             details = {k: [user.get(k), v_] for k, v_ in changes.items()}
@@ -200,7 +185,7 @@ def update_user(uid: int):
 def reset_password(uid: int):
     conn = dbm.get_db()
     user = _load(conn, uid)
-    _require_covers(conn, user["role_id"], user["role_is_admin"], ADMIN_ACCOUNT_MSG)
+    perms.require_covers(conn, user["role_id"], user["role_is_admin"], ADMIN_ACCOUNT_MSG)
     data = body()
     settings = appsettings.get_settings(conn)
     password = data.get("password")
@@ -227,7 +212,7 @@ def unlock_user(uid: int):
     conn = dbm.get_db()
     user = _load(conn, uid)
     # sonst hebt users.manage die Sperre beim Raten des Passworts eines mächtigeren Kontos immer wieder auf
-    _require_covers(conn, user["role_id"], user["role_is_admin"], ADMIN_ACCOUNT_MSG)
+    perms.require_covers(conn, user["role_id"], user["role_is_admin"], ADMIN_ACCOUNT_MSG)
     with dbm.transaction(conn):
         user = _load_covered(conn, uid)
         conn.execute("UPDATE users SET failed_logins = 0, locked_until = NULL, updated_at = ? WHERE id = ?",
@@ -245,7 +230,7 @@ def delete_user(uid: int):
     user = _load(conn, uid)
     if uid == me["id"]:
         raise ApiError(403, "self_protection", "Das eigene Konto kann nicht gelöscht werden.")
-    _require_covers(conn, user["role_id"], user["role_is_admin"], ADMIN_ACCOUNT_MSG)
+    perms.require_covers(conn, user["role_id"], user["role_is_admin"], ADMIN_ACCOUNT_MSG)
     with dbm.transaction(conn):
         user = _load_covered(conn, uid)
         if _is_active_admin(user):
