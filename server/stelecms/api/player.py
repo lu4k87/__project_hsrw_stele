@@ -135,7 +135,7 @@ def heartbeat():
     data = body()
     settings = appsettings.get_settings(conn)
     now = timeutil.now_iso()
-    current_version = Resolver(conn, settings).stele_manifest(s)["version"]
+    current_version = Resolver(conn, settings).manifest_version(s)
     old_state = dbm.jloads(s["last_state"], {})
     reported = _s(data.get("manifest_version"), 64)
     mode = data.get("mode") if data.get("mode") in ("slideshow", "touch", "standby", "idle", "pairing") else None

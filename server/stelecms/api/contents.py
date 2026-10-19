@@ -32,7 +32,7 @@ def _media_dir() -> Path:
 
 
 def _serialize(conn, r, idx=None, with_usages=False):
-    return media.serialize_content(conn, r, idx or media.UsageIndex(conn), with_usages=with_usages)
+    return media.serialize_content(conn, r, idx or media.UsageIndex.cached(conn), with_usages=with_usages)
 
 
 @bp.get("")
@@ -67,7 +67,7 @@ def list_contents():
     wsql = (" WHERE " + " AND ".join(where)) if where else ""
     total = dbm.scalar(conn, "SELECT COUNT(*) FROM contents" + wsql, params)
     rows = dbm.rows(conn, f"SELECT * FROM contents{wsql} ORDER BY {order} LIMIT ? OFFSET ?", params + [limit, offset])
-    idx = media.UsageIndex(conn)
+    idx = media.UsageIndex.cached(conn)
     return jsonify({"items": [_serialize(conn, r, idx) for r in rows], "total": total, "tags": _all_tags(conn)})
 
 

@@ -19,7 +19,7 @@ from pathlib import Path
 from PIL import Image, ImageOps, UnidentifiedImageError
 
 from . import db as dbm
-from . import schemas, security, timeutil
+from . import cache, schemas, security, timeutil
 from .auth import person
 from .validation import is_http_url, is_int
 
@@ -565,6 +565,11 @@ class UsageIndex:
         for r in conn.execute("SELECT id, name, config FROM touch_menus").fetchall():
             for cid in schemas.touch_content_ids(dbm.jloads(r["config"], {})):
                 self._add(cid, "touch_menu", r["id"], r["name"])
+
+    @classmethod
+    def cached(cls, conn) -> "UsageIndex":
+        """Für Lese-Anfragen (Mediathek): verworfen bei jeder Änderung. Lösch-Prüfungen bauen ihn frisch."""
+        return cache.get(("usage_index",), lambda: cls(conn))
 
     def _add(self, cid, typ, oid, name, published=False, in_draft=False):
         entry = self._map.setdefault(cid, {}).setdefault(

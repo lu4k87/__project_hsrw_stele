@@ -106,7 +106,9 @@ def validate_items(conn, raw, v: Validator) -> list[dict]:
     if len(raw) > MAX_ITEMS:
         v.error("items", f"Höchstens {MAX_ITEMS} Folien je Präsentation.")
         return []
-    ids = {r["id"]: r for r in dbm.rows(conn, "SELECT id, type, status FROM contents")}
+    wanted = sorted({it["content_id"] for it in raw if isinstance(it, dict) and is_int(it.get("content_id"))})
+    ids = {r["id"] for r in dbm.rows(conn, f"SELECT id FROM contents WHERE id IN ({','.join('?' * len(wanted))})",
+                                     wanted)} if wanted else set()
     out = []
     for i, it in enumerate(raw):
         if not isinstance(it, dict):

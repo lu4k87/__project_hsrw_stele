@@ -21,7 +21,7 @@ from concurrent.futures import ThreadPoolExecutor
 from datetime import timedelta
 from pathlib import Path
 
-from . import appsettings, security, steles, timeutil
+from . import appsettings, cache, security, steles, timeutil
 from . import db as dbm
 from .validation import is_http_url
 
@@ -149,7 +149,8 @@ def fetch_feed(url: str) -> list[str]:
     return parse_feed(raw)
 
 
-def refresh_feeds(conn, fetch=fetch_feed) -> int:
+def refresh_feeds(conn, fetch=fetch_feed, db_path=None) -> int:
+    """Holt alle Feeds; mit `db_path` danach den Cache verwerfen (neue Meldungen → neue Manifest-Version)."""
     urls = feed_urls(conn)
     for url in urls:
         now = timeutil.now_iso()
@@ -167,6 +168,8 @@ def refresh_feeds(conn, fetch=fetch_feed) -> int:
                 # Letzte gute Meldungen behalten, nur Fehler vermerken
                 conn.execute("INSERT INTO feed_cache(url, fetched_at, ok, items, error) VALUES (?, ?, 0, '[]', ?) "
                              "ON CONFLICT(url) DO UPDATE SET error = excluded.error", (url, now, err))
+    if db_path is not None and urls:
+        cache.bump(db_path)
     return len(urls)
 
 
@@ -243,7 +246,7 @@ class Monitor(threading.Thread):
                 if self._due("ping", PING_EVERY_S):
                     self._step(conn, "Ping", ping_all, conn)
                 if self._due("feeds", FEEDS_EVERY_S):
-                    self._step(conn, "Feeds", refresh_feeds, conn)
+                    self._step(conn, "Feeds", refresh_feeds, conn, fetch_feed, self.cfg["DB_PATH"])
                 if self._due("cleanup", CLEANUP_EVERY_S):
                     self._step(conn, "Aufräumen", cleanup, conn, self.cfg)
             except Exception:  # noqa: BLE001 – Überwachung darf nie abbrechen

@@ -7,8 +7,10 @@ if [ ! -x .venv/bin/python ]; then
   echo "Lege virtuelle Umgebung .venv an …"
   "$PY" -m venv .venv
 fi
-if ! .venv/bin/python -c "import flask, PIL, waitress" 2>/dev/null; then
+# Nur installieren, wenn sich requirements.txt seit der letzten Installation geändert hat (spart den Import-Test)
+if ! cmp -s requirements.txt .venv/requirements.installed; then
   echo "Installiere Abhängigkeiten …"
   .venv/bin/python -m pip install -q -r requirements.txt
+  cp requirements.txt .venv/requirements.installed
 fi
 exec .venv/bin/python server/run.py "$@"

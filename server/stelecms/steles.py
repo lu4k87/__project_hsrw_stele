@@ -100,7 +100,7 @@ def serialize(conn, stele: dict, resolver: Resolver, settings: dict | None = Non
             default = {"id": p["id"], "name": p["name"], "status": resolver.status(p)}
     player = None
     if state.get("player_version") or state.get("user_agent"):
-        manifest_version = resolver.stele_manifest(stele)["version"]
+        manifest_version = resolver.manifest_version(stele)
         player = {"version": state.get("player_version"), "user_agent": state.get("user_agent"),
                   "screen": state.get("screen"), "manifest_version": state.get("manifest_version"),
                   "manifest_current": state.get("manifest_version") == manifest_version,
@@ -154,7 +154,7 @@ def compute_alerts(conn, cfg, resolver: Resolver, settings: dict | None = None) 
         state = dbm.jloads(s["last_state"], {})
         since = state.get("manifest_mismatch_since")
         if since and (timeutil.seconds_since(since, now) or 0) > MANIFEST_OUTDATED_S:
-            current = resolver.stele_manifest(s)["version"]
+            current = resolver.manifest_version(s)
             if state.get("manifest_version") != current:
                 alerts.append({"level": "warning", "code": "manifest_outdated", "stele_id": s["id"],
                                "message": f"Stele {name} zeigt seit über 5 Minuten einen veralteten Stand. "

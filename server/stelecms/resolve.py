@@ -4,7 +4,7 @@ from __future__ import annotations
 import copy
 import hashlib
 
-from . import appsettings, schemas, timeutil
+from . import appsettings, cache, schemas, timeutil
 from . import db as dbm
 from . import fonts as fontsm
 from .media import content_urls
@@ -248,7 +248,7 @@ class Resolver:
         }
 
     def draft_hash(self, p: dict) -> str:
-        return status_hash(self.resolve(p))
+        return cache.get(("draft_hash", p["id"]), lambda: status_hash(self.resolve(p)))
 
     def status(self, p: dict) -> str:
         if not p["published_hash"]:
@@ -266,6 +266,10 @@ class Resolver:
         return snap
 
     # ------------------------------------------------------------ Manifest
+
+    def manifest_version(self, stele: dict) -> str:
+        """Version des Stelen-Manifests (Heartbeat, Status) – aus dem Cache, sonst neu berechnet."""
+        return cache.get(("manifest_version", stele["id"]), lambda: self.stele_manifest(stele)["version"])
 
     def stele_manifest(self, stele: dict) -> dict:
         if stele["id"] in self._manifests:

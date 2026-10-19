@@ -14,7 +14,7 @@ from pathlib import Path
 
 from PIL import Image
 
-from . import appsettings, media, timeutil
+from . import appsettings, cache, media, timeutil
 from . import db as dbm
 
 log = logging.getLogger("stelecms.jobs")
@@ -75,6 +75,7 @@ def process_pending(cfg) -> int:
                 conn.execute("UPDATE jobs SET status = 'running', updated_at = ? WHERE id = ?",
                              (timeutil.now_iso(), job["id"]))
             run_job(conn, cfg, job)
+            cache.bump(cfg["DB_PATH"])   # Inhalt fertig/fehlerhaft → Entwurfs-Status ändert sich
             count += 1
     finally:
         conn.close()

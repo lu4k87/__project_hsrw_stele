@@ -12,7 +12,7 @@ from pathlib import Path
 
 from flask import Flask, g, request
 
-from . import auth, config, db as dbm, errors, security, timeutil
+from . import auth, cache, config, db as dbm, errors, security, timeutil
 from .api import register_blueprints
 from .web import register_web
 
@@ -21,6 +21,7 @@ log = logging.getLogger("stelecms")
 # Hartes Limit für Anfragen ohne Datei-Upload (JSON, Formulare)
 DEFAULT_MAX_BODY = 16 * 1024 * 1024
 SCREENSHOT_MAX_BODY = 12 * 1024 * 1024
+WRITE_METHODS = ("POST", "PUT", "PATCH", "DELETE")
 
 
 def create_app(overrides: dict | None = None) -> Flask:
@@ -60,6 +61,7 @@ def create_app(overrides: dict | None = None) -> Flask:
                 seed.seed(app, conn, demo=bool(app.config["SEED_DEMO"]))
     finally:
         conn.close()
+    cache.bump(app.config["DB_PATH"])   # Seed/Migration schrieb ohne Request
 
     # ------------------------------------------------------------ Request-Ablauf
     app.teardown_appcontext(dbm.close_db)
@@ -71,6 +73,8 @@ def create_app(overrides: dict | None = None) -> Flask:
         _limit_body(app, path)
         if path.startswith("/api/player/") or path.startswith("/api/agent/"):
             return None
+        if path.startswith("/api/") and request.method in WRITE_METHODS:
+            g.cache_bypass = True   # eigene Änderung nie aus dem Cache sehen; _after verwirft ihn
         if path.startswith("/api/"):
             auth.load_user_from_session()
             security.check_csrf()
@@ -80,6 +84,8 @@ def create_app(overrides: dict | None = None) -> Flask:
 
     @app.after_request
     def _after(resp):
+        if g.get("cache_bypass"):
+            cache.bump(app.config["DB_PATH"])
         return security.apply_security_headers(resp)
 
     errors.register_error_handlers(app)

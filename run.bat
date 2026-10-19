@@ -21,10 +21,12 @@ if not exist ".venv\Scripts\python.exe" (
   echo Lege virtuelle Umgebung .venv an ...
   %PY% -m venv --clear .venv || goto :fehler
 )
-.venv\Scripts\python.exe -c "import flask, PIL, waitress, tzdata" >nul 2>nul
+rem Nur installieren, wenn sich requirements.txt seit der letzten Installation geändert hat (spart den Import-Test)
+fc /b requirements.txt .venv\requirements.installed >nul 2>nul
 if errorlevel 1 (
   echo Installiere Abhängigkeiten ...
   .venv\Scripts\python.exe -m pip install -q -r requirements.txt || goto :fehler
+  copy /y requirements.txt .venv\requirements.installed >nul
 )
 
 .venv\Scripts\python.exe server\run.py %*
