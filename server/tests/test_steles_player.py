@@ -155,6 +155,33 @@ def test_heartbeat_stores_state_and_logs(admin, app):
     assert ov["plays_today"] == 1 and ov["touch_sessions_today"] == 1 and ov["errors_24h"] == 1
 
 
+def test_heartbeat_idle_mode_is_not_night_mode(admin, app):
+    """Player ohne Anzeige meldet „idle“ (eigener Modus), nicht „standby“ (Nachtmodus)."""
+    s = make_stele(admin)
+    player = _player(app, stele_key(s))
+    assert player.post("/api/player/heartbeat", json={"mode": "idle"}).status_code == 200
+    st = admin.get(f"/api/steles/{s['id']}").get_json()
+    assert st["status"] == "online" and st["now"]["mode"] == "idle"
+    kinds = {e["kind"] for e in admin.get(f"/api/monitoring/steles/{s['id']}").get_json()["events"]}
+    assert "standby" not in kinds
+    player.post("/api/player/heartbeat", json={"mode": "quatsch"})
+    assert admin.get(f"/api/steles/{s['id']}").get_json()["now"]["mode"] is None
+
+
+def test_pairing_shortly_before_expiry_keeps_code_for_pickup(admin, app):
+    """Kopplung kurz vor Ablauf: Code bleibt so lange gültig, dass der Player den Schlüssel abholen kann."""
+    code = _player(app).post("/api/player/pairing", json={}).get_json()["code"]
+    conn = dbm.connect(app.config["DB_PATH"])
+    conn.execute("UPDATE pairing_requests SET expires_at = ? WHERE code = ?",
+                 (timeutil.iso(timeutil.utcnow() + timedelta(seconds=2)), code))
+    s = make_stele(admin, "Knapp", pairing_code=code)
+    expires = timeutil.parse_iso(dbm.scalar(conn, "SELECT expires_at FROM pairing_requests WHERE code = ?", (code,)))
+    conn.close()
+    assert expires - timeutil.utcnow() >= timedelta(seconds=110)
+    body = _player(app).get(f"/api/player/pairing/{code}").get_json()
+    assert body["status"] == "paired" and body["stele"]["id"] == s["id"]
+
+
 def test_online_segments_and_offline_event(admin, app, monkeypatch):
     from stelecms import monitor
     s = make_stele(admin)

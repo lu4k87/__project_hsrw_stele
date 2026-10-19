@@ -72,6 +72,47 @@ def test_ip_rate_limit(anon):
     assert codes[20] == 429
 
 
+def test_ip_rate_limit_counts_every_attempt(anon):
+    """Prüfen und Zählen in einem Schritt vor der Passwortprüfung: auch erfolgreiche Versuche zählen."""
+    codes = [anon.post("/api/auth/login", json={"username": "autor", "password": "autor123"}).status_code
+             for _ in range(21)]
+    assert codes[:20] == [200] * 20 and codes[20] == 429
+
+
+def test_failed_login_counter_is_atomic(app, anon, monkeypatch):
+    """Parallele Fehlversuche (hier: während der Passwortprüfung in der DB hochgezählt) gehen nicht verloren."""
+    from stelecms import db as dbm
+    from stelecms.api import auth as api_auth
+
+    def parallel_failures(_hash, _password):
+        conn = dbm.connect(app.config["DB_PATH"])
+        conn.execute("UPDATE users SET failed_logins = 4 WHERE username = 'autor'")
+        conn.close()
+        return False
+
+    monkeypatch.setattr(api_auth, "check_password", parallel_failures)
+    r = anon.post("/api/auth/login", json={"username": "autor", "password": "x"})
+    assert r.status_code == 423 and r.get_json()["error"]["code"] == "account_locked"
+
+
+def test_lock_set_during_password_check_blocks_login(app, anon, monkeypatch):
+    from stelecms import db as dbm
+    from stelecms import timeutil
+    from stelecms.api import auth as api_auth
+    from datetime import timedelta
+
+    def locked_meanwhile(_hash, _password):
+        conn = dbm.connect(app.config["DB_PATH"])
+        conn.execute("UPDATE users SET locked_until = ? WHERE username = 'autor'",
+                     (timeutil.iso(timeutil.utcnow() + timedelta(minutes=5)),))
+        conn.close()
+        return True
+
+    monkeypatch.setattr(api_auth, "check_password", locked_meanwhile)
+    r = anon.post("/api/auth/login", json={"username": "autor", "password": "autor123"})
+    assert r.status_code == 423 and r.get_json()["error"]["code"] == "account_locked"
+
+
 def test_dev_login_loopback_only(app):
     remote = Client(app, remote_addr="10.1.2.3")
     s = remote.get("/api/auth/session").get_json()

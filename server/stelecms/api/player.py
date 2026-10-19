@@ -138,7 +138,7 @@ def heartbeat():
     current_version = Resolver(conn, settings).stele_manifest(s)["version"]
     old_state = dbm.jloads(s["last_state"], {})
     reported = _s(data.get("manifest_version"), 64)
-    mode = data.get("mode") if data.get("mode") in ("slideshow", "touch", "standby", "pairing") else None
+    mode = data.get("mode") if data.get("mode") in ("slideshow", "touch", "standby", "idle", "pairing") else None
     cur = data.get("current") if isinstance(data.get("current"), dict) else None
     state = {
         "player_version": _s(data.get("player_version"), 40), "manifest_version": reported, "mode": mode,

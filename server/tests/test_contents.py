@@ -164,6 +164,33 @@ def test_delete_in_use_409_and_bulk(admin):
     assert admin.get(f"/api/contents/{free['id']}").status_code == 404
 
 
+def test_update_content_edit_conflict(admin):
+    """PATCH mit veraltetem expected_updated_at überschreibt nicht still (§3, 409 edit_conflict)."""
+    t = make_text(admin, "Original")
+    r = admin.patch(f"/api/contents/{t['id']}", json={"title": "Fremd", "expected_updated_at": "2000-01-01T00:00:00Z"})
+    assert r.status_code == 409 and r.get_json()["error"]["code"] == "edit_conflict"
+    assert admin.get(f"/api/contents/{t['id']}").get_json()["title"] == "Original"
+    r = admin.patch(f"/api/contents/{t['id']}", json={"title": "Neu", "expected_updated_at": t["updated_at"]})
+    assert r.status_code == 200 and r.get_json()["title"] == "Neu"
+
+
+def test_bulk_delete_checks_usages_inside_transaction(admin, monkeypatch):
+    from stelecms import media
+    from stelecms.api import contents as api_contents
+    seen = []
+
+    class SpyIndex(media.UsageIndex):
+        def __init__(self, conn):
+            seen.append(conn.in_transaction)
+            super().__init__(conn)
+
+    monkeypatch.setattr(api_contents.media, "UsageIndex", SpyIndex)
+    free = make_image(admin, "frei.png")
+    seen.clear()  # Anlegen baut den Index nur zum Lesen
+    r = admin.post("/api/contents/bulk-delete", json={"ids": [free["id"]]})
+    assert r.get_json()["deleted"] == [free["id"]] and seen == [True]
+
+
 def test_published_snapshot_keeps_content_in_use(admin):
     img = make_image(admin)
     p = make_presentation(admin, "P", [img["id"]], publish=True)

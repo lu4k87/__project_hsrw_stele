@@ -234,7 +234,8 @@ export class Player {
 
   get uiMode() {
     if (this.slideMode) return this.touch.isOpen ? 'touch' : 'slide';
-    if (this.night || this.empty) return 'standby';
+    if (this.night) return 'standby';
+    if (this.empty) return 'idle'; // läuft, aber nichts anzuzeigen (Standbild) – kein Nachtmodus
     if (this.touch.isOpen) return 'touch';
     return 'slideshow';
   }

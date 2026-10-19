@@ -7,7 +7,7 @@ from .. import appsettings, timeutil
 from .. import auth as authm
 from .. import db as dbm
 from ..audit import audit, q
-from ..errors import ApiError, conflict
+from ..errors import ApiError, conflict, forbidden
 from ..permissions import require
 from ..security import generate_password, hash_password
 from ..validation import USERNAME_RE, Validator, body, is_int
@@ -28,6 +28,16 @@ def _active_admin_count(conn, exclude_id: int | None = None) -> int:
 
 def _is_active_admin(user: dict) -> bool:
     return bool(user["role_is_admin"]) and bool(user["is_active"])
+
+
+def _require_admin_actor(message: str) -> None:
+    """Administrator-Konten und die Administrator-Rolle verwaltet nur, wer selbst Administrator ist (§6.3)."""
+    if not authm.current_user()["role_is_admin"]:
+        raise forbidden(message)
+
+
+ADMIN_ROLE_MSG = "Die Rolle Administrator kann nur eine Administratorin oder ein Administrator vergeben."
+ADMIN_ACCOUNT_MSG = "Konten mit der Rolle Administrator kann nur eine Administratorin oder ein Administrator ändern."
 
 
 def _role(conn, v: Validator, role_id):
@@ -75,6 +85,8 @@ def create_user():
         v.error("password", f"Das Passwort muss mindestens {settings['password_min_length']} Zeichen haben.")
     must_change = v.boolean("must_change_password", default=True)
     v.done()
+    if role["is_admin"]:
+        _require_admin_actor(ADMIN_ROLE_MSG)
     now = timeutil.now_iso()
     with dbm.transaction(conn):
         uid = dbm.insert(conn, "users", {
@@ -109,6 +121,10 @@ def update_user(uid: int):
         v.error("role_id", "Bitte eine Rolle wählen.")
     is_active = v.boolean("is_active")
     v.done()
+    if user["role_is_admin"]:
+        _require_admin_actor(ADMIN_ACCOUNT_MSG)
+    if role is not None and role["is_admin"]:
+        _require_admin_actor(ADMIN_ROLE_MSG)
     role_change = role is not None and role["id"] != user["role_id"]
     deactivate = is_active is False and user["is_active"]
     if uid == me["id"] and role_change:
@@ -154,6 +170,8 @@ def update_user(uid: int):
 def reset_password(uid: int):
     conn = dbm.get_db()
     user = _load(conn, uid)
+    if user["role_is_admin"]:
+        _require_admin_actor(ADMIN_ACCOUNT_MSG)
     data = body()
     settings = appsettings.get_settings(conn)
     password = data.get("password")
@@ -177,6 +195,8 @@ def reset_password(uid: int):
 def unlock_user(uid: int):
     conn = dbm.get_db()
     user = _load(conn, uid)
+    if user["role_is_admin"]:   # sonst hebt users.manage die Sperre beim Raten des Admin-Passworts immer wieder auf
+        _require_admin_actor(ADMIN_ACCOUNT_MSG)
     with dbm.transaction(conn):
         conn.execute("UPDATE users SET failed_logins = 0, locked_until = NULL, updated_at = ? WHERE id = ?",
                      (timeutil.now_iso(), uid))
@@ -193,6 +213,8 @@ def delete_user(uid: int):
     user = _load(conn, uid)
     if uid == me["id"]:
         raise ApiError(403, "self_protection", "Das eigene Konto kann nicht gelöscht werden.")
+    if user["role_is_admin"]:
+        _require_admin_actor(ADMIN_ACCOUNT_MSG)
     if _is_active_admin(user) and _active_admin_count(conn, exclude_id=uid) == 0:
         raise conflict("Es muss mindestens ein aktives Konto mit der Rolle Administrator bleiben.", "last_admin")
     with dbm.transaction(conn):

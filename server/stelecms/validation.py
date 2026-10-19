@@ -1,6 +1,7 @@
 """Kleine Validierungshelfer mit feldgenauen deutschen Meldungen."""
 from __future__ import annotations
 
+import math
 import re
 from urllib.parse import urlparse
 
@@ -29,7 +30,10 @@ def is_int(value) -> bool:
 
 
 def is_number(value) -> bool:
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    """Endliche Zahl ohne bool; NaN/Infinity (lässt der JSON-Parser durch) bestehen keine Bereichsprüfung."""
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, int) or (isinstance(value, float) and math.isfinite(value))
 
 
 def is_color(value) -> bool:

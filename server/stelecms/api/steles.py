@@ -4,6 +4,7 @@ from __future__ import annotations
 import ipaddress
 import re
 import secrets
+from datetime import timedelta
 
 from flask import Blueprint, current_app, jsonify, send_file
 
@@ -17,6 +18,8 @@ from ..resolve import Resolver
 from ..validation import Validator, body, is_int
 from .common import arg_int, get_or_404, list_response, ok
 from .manifest import manifest_response
+
+PAIRING_CLAIM_GRACE = timedelta(minutes=2)  # Player fragt alle 3 s: Zeit, den Schlüssel nach dem Koppeln abzuholen
 
 bp = Blueprint("api_steles", __name__, url_prefix="/api")
 
@@ -100,9 +103,13 @@ def _claim_code(conn, code, v_field: str = "code") -> dict:
 
 
 def _pair(conn, stele: dict, code_row: dict) -> None:
-    now = timeutil.now_iso()
-    conn.execute("UPDATE pairing_requests SET stele_id = ?, claimed_at = ? WHERE code = ?",
-                 (stele["id"], now, code_row["code"]))
+    now_dt = timeutil.utcnow()
+    now = timeutil.iso(now_dt)
+    # Kurz vor Ablauf gekoppelt: Code noch so lange gültig lassen, dass der Player den Schlüssel abholen kann
+    old_exp = timeutil.parse_iso(code_row["expires_at"])
+    expires = timeutil.iso(max(old_exp, now_dt + PAIRING_CLAIM_GRACE) if old_exp else now_dt + PAIRING_CLAIM_GRACE)
+    conn.execute("UPDATE pairing_requests SET stele_id = ?, claimed_at = ?, expires_at = ? WHERE code = ?",
+                 (stele["id"], now, expires, code_row["code"]))
     conn.execute("UPDATE steles SET paired_at = ?, updated_at = ? WHERE id = ?", (now, now, stele["id"]))
     info = dbm.jloads(code_row["device_info"], {})
     steles.add_event(conn, stele["id"], "info", "paired", "Stele wurde per Code gekoppelt.", {"device_info": info})

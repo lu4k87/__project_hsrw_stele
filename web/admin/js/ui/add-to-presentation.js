@@ -9,6 +9,7 @@ import { field, select } from './form.js';
 import { toast } from './toast.js';
 import { loadingBlock, errorState } from './empty.js';
 import { plural } from '../format.js';
+import { isEditConflict } from './edit-conflict.js';
 
 /** Folie in die Form für PUT /api/presentations/<id>/items bringen. */
 export function itemToPayload(it) {
@@ -69,7 +70,14 @@ export async function addToPresentation(contents) {
     const p = await api.get(`/api/presentations/${id}`);
     const items = (p.items || []).map(itemToPayload);
     for (const c of contents) items.push(newItem(c.id));
-    await api.put(`/api/presentations/${id}/items`, { items });
+    try {
+      // expected_updated_at: zwischen Laden und Speichern geänderte Folien nicht stillschweigend überschreiben
+      await api.put(`/api/presentations/${id}/items`, { items, expected_updated_at: p.updated_at });
+    } catch (err) {
+      if (!isEditConflict(err)) throw err;
+      toast.error(`„${p.name}“ wurde gerade anderweitig geändert. Bitte erneut „Hinzufügen“ wählen – die Folien werden dann an den aktuellen Stand angehängt.`);
+      return false;
+    }
     toast.success(`${plural(n, 'Folie', 'Folien')} zu „${p.name}“ hinzugefügt.`, {
       action: { label: 'Präsentation öffnen', onClick: () => navigate(`/presentations/${id}`) },
     });

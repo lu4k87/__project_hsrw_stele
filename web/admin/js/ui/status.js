@@ -44,11 +44,14 @@ export const STELE_STATUS = {
   online: { kind: 'success', label: 'Online', icon: 'wifi', pill: 'online', hint: 'Meldet sich regelmäßig.' },
   offline: { kind: 'danger', label: 'Offline', icon: 'wifi-off', pill: 'offline', alert: true, hint: 'Keine Meldung mehr – Stromversorgung und Netz der Stele prüfen.' },
   standby: { kind: 'neutral', label: 'Nachtmodus', icon: 'moon', pill: 'standby', hint: 'Bildschirm laut Zeitplan aus.' },
+  idle: { kind: 'warning', label: 'Nichts anzuzeigen', icon: 'alert-triangle', pill: 'idle', hint: 'Läuft, aber nichts anzuzeigen – Präsentation planen oder Standard-Präsentation setzen.' },
   never: { kind: 'neutral', label: 'Nicht gekoppelt', icon: 'link', pill: 'standby', hint: 'Hat sich noch nie gemeldet – Stele koppeln oder Player-Link auf der Stele öffnen.' },
 };
 
 /** Eintrag aus STELE_STATUS für eine Stele (unbekannt → wie „never“). */
 export function steleState(stele) {
+  // Online, aber der Player meldet „idle“ (keine Präsentation, Standbild) → Warnung statt „Online“
+  if (stele?.status === 'online' && stele.now?.mode === 'idle') return STELE_STATUS.idle;
   return STELE_STATUS[stele?.status] || STELE_STATUS.never;
 }
 

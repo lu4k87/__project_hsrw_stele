@@ -127,21 +127,66 @@ def test_self_protection(admin):
     assert r.get_json()["error"]["code"] == "self_protection"
 
 
-def test_last_admin(admin, app):
+def test_admin_accounts_and_role_only_by_admins(admin, app):
+    """users.manage allein reicht nicht für Administrator-Konten und die Administrator-Rolle (§6.3)."""
     roles = _roles(admin)
     hr_role = admin.post("/api/roles", json={"name": "Personal", "permissions": ["users.manage"]}).get_json()
     admin.post("/api/users", json={"username": "personal", "display_name": "HR", "role_id": hr_role["id"],
                                    "password": "personal123", "must_change_password": False})
     hr = Client(app).login("personal", "personal123")
-    admin_id = _users(admin)["admin"]["id"]
-    for method, payload in (("DELETE", None), ("PATCH", {"is_active": False}),
-                            ("PATCH", {"role_id": roles["Autor"]})):
-        r = hr.open(method, f"/api/users/{admin_id}", json=payload)
-        assert r.status_code == 409 and r.get_json()["error"]["code"] == "last_admin", (method, payload)
-    # Mit einem zweiten Administrator geht es
-    admin.post("/api/users", json={"username": "chefin", "display_name": "Chefin", "role_id": roles["Administrator"],
-                                   "password": "chefin12345"})
-    assert hr.patch(f"/api/users/{admin_id}", json={"is_active": False}).status_code == 200
+    users = _users(admin)
+    admin_id, autor_id = users["admin"]["id"], users["autor"]["id"]
+    for method, url, payload in (
+            ("DELETE", f"/api/users/{admin_id}", None),
+            ("PATCH", f"/api/users/{admin_id}", {"is_active": False}),
+            ("PATCH", f"/api/users/{admin_id}", {"role_id": roles["Autor"]}),
+            ("PATCH", f"/api/users/{admin_id}", {"display_name": "Übernommen"}),
+            ("POST", f"/api/users/{admin_id}/password", {"password": "uebernommen123"}),
+            ("PATCH", f"/api/users/{autor_id}", {"role_id": roles["Administrator"]}),
+            ("POST", "/api/users", {"username": "chef2", "display_name": "Chef", "role_id": roles["Administrator"],
+                                    "password": "chef2chef2"})):
+        r = hr.open(method, url, json=payload)
+        assert r.status_code == 403 and r.get_json()["error"]["code"] == "forbidden", (method, url, payload)
+    after = _users(admin)
+    assert after["admin"]["is_active"] and after["admin"]["display_name"] == "Alex Admin"
+    assert after["autor"]["role"]["name"] == "Autor" and "chef2" not in after
+    Client(app).login("admin", "admin123")  # Passwort unverändert
+    # Normale Konten verwaltet HR weiter
+    assert hr.patch(f"/api/users/{autor_id}", json={"role_id": roles["Betrachter"]}).status_code == 200
+    assert hr.post(f"/api/users/{autor_id}/password", json={}).status_code == 200
+    # Administratoren dürfen es
+    r = admin.post("/api/users", json={"username": "chefin", "display_name": "Chefin",
+                                       "role_id": roles["Administrator"], "password": "chefin12345"})
+    assert r.status_code == 201
+    assert admin.patch(f"/api/users/{r.get_json()['user']['id']}", json={"is_active": False}).status_code == 200
+
+
+def test_roles_grant_only_own_permissions(admin, app):
+    """roles.manage ohne Administrator: nur eigene Rechte vergeben, eigene Rolle nicht erweitern (§6.3)."""
+    roles = _roles(admin)
+    rv_role = admin.post("/api/roles", json={"name": "Rollenpflege",
+                                             "permissions": ["roles.manage", "content.view"]}).get_json()
+    admin.post("/api/users", json={"username": "rollen", "display_name": "RV", "role_id": rv_role["id"],
+                                   "password": "rollen12345", "must_change_password": False})
+    rv = Client(app).login("rollen", "rollen12345")
+    for payload in ({"name": "Alles", "permissions": ["settings.manage"]},
+                    {"name": "Kopie Admin", "copy_from": roles["Administrator"]}):
+        r = rv.post("/api/roles", json=payload)
+        assert r.status_code == 403 and r.get_json()["error"]["code"] == "forbidden", payload
+    assert rv.post("/api/roles", json={"name": "Lesen", "permissions": ["content.view"]}).status_code == 201
+    # Eigene Rolle nicht erweitern
+    r = rv.patch(f"/api/roles/{rv_role['id']}", json={"permissions": ["roles.manage", "content.view",
+                                                                       "users.manage"]})
+    assert r.status_code == 403
+    # Fremder Rolle keine Rechte geben, die man selbst nicht hat …
+    autor = next(x for x in admin.get("/api/roles").get_json()["items"] if x["name"] == "Autor")
+    r = rv.patch(f"/api/roles/{autor['id']}", json={"permissions": autor["permissions"] + ["settings.manage"]})
+    assert r.status_code == 403
+    # … vorhandene (auch nicht selbst gehaltene) Rechte behalten und entfernen geht
+    kept = [k for k in autor["permissions"] if k != "schedule.view"]
+    r = rv.patch(f"/api/roles/{autor['id']}", json={"permissions": kept})
+    assert r.status_code == 200 and "schedule.view" not in r.get_json()["permissions"]
+    assert "settings.manage" not in rv.get("/api/auth/session").get_json()["permissions"]
 
 
 def test_role_locked_and_in_use(admin):

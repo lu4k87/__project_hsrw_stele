@@ -8,7 +8,7 @@ from .. import db as dbm
 from .. import permissions as perms
 from .. import timeutil
 from ..audit import audit, q
-from ..errors import ApiError, conflict
+from ..errors import ApiError, conflict, forbidden
 from ..permissions import require
 from ..validation import Validator, body, is_int
 from .common import get_or_404, list_response, ok
@@ -41,6 +41,18 @@ def _permission_list(v: Validator, value) -> list[str] | None:
         v.error("permissions", "Unbekannte Rechte: " + ", ".join(unknown))
         return None
     return perms.sort_keys(value)
+
+
+def _check_grantable(keys: list[str], old_keys: list[str]) -> None:
+    """Nur Rechte vergeben, die das eigene Konto selbst hat (Administrator: alle). Damit lässt sich auch die
+    eigene Rolle nicht erweitern, denn deren Rechte sind genau die eigenen."""
+    if authm.current_user()["role_is_admin"]:
+        return
+    added = set(perms.effective(keys)) - set(perms.effective(old_keys))
+    missing = perms.sort_keys(added - authm.current_permissions())
+    if missing:
+        raise forbidden("Es lassen sich nur Rechte vergeben, die das eigene Konto selbst hat. Fehlend: "
+                        + ", ".join(missing))
 
 
 def _set_permissions(conn, role_id: int, keys: list[str]) -> None:
@@ -84,6 +96,7 @@ def create_role():
             keys = perms.ALL_KEYS[:] if source["is_admin"] else authm.role_permission_keys(conn, source["id"])
         else:
             keys = []
+    _check_grantable(keys, [])
     if description is None:
         description = source["description"] if source else ""
     now = timeutil.now_iso()
@@ -118,6 +131,8 @@ def update_role(rid: int):
         if (name and name != role["name"]) or (keys is not None and keys != perms.ALL_KEYS):
             raise ApiError(403, "role_locked", ROLE_LOCKED_MSG)
         keys = None
+    if keys is not None:
+        _check_grantable(keys, old_keys)
     changes, details = {}, {}
     if name and name != role["name"]:
         changes["name"] = name

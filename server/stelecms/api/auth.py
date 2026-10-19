@@ -33,7 +33,8 @@ def login():
     conn = dbm.get_db()
     data = body()
     ip = client_ip()
-    retry = _limiter().blocked(ip)
+    # Prüfen und zählen in einem Schritt (sonst kommen parallele Anfragen alle an der Drossel vorbei, §7.2)
+    retry = _limiter().check_and_hit(ip)
     if retry:
         raise ApiError(429, "rate_limited", "Zu viele Anmeldeversuche von dieser Adresse. Bitte in einigen "
                                             "Minuten erneut versuchen.", details={"retry_after_s": int(retry)})
@@ -46,22 +47,26 @@ def login():
     settings = appsettings.get_settings(conn)
     user = dbm.row(conn, authm.USER_SELECT + " WHERE u.username = ?", (username,))
     if user and authm.is_locked(user):
-        _limiter().hit(ip)
         raise authm.account_locked_error(user)
     if not check_password(user["password_hash"] if user else None, password):
-        _limiter().hit(ip)
         locked_until = None
         with dbm.transaction(conn):
             if user:
-                failed = int(user["failed_logins"] or 0) + 1
-                # Abgelaufene Sperre: Zähler beginnt neu
-                if user["locked_until"] and not authm.is_locked(user):
-                    failed = 1
-                if failed >= settings["lockout_attempts"]:
-                    locked_until = timeutil.iso(timeutil.utcnow() + timedelta(minutes=settings["lockout_minutes"]))
-                    failed = 0
-                conn.execute("UPDATE users SET failed_logins = ?, locked_until = ? WHERE id = ?",
-                             (failed, locked_until, user["id"]))
+                # Zähler atomar in der Schreib-Transaktion: parallele Fehlversuche gehen nicht verloren
+                cur = dbm.row(conn, "SELECT failed_logins, locked_until FROM users WHERE id = ?", (user["id"],))
+                if authm.is_locked(cur):  # parallel gesperrt
+                    locked_until = cur["locked_until"]
+                else:
+                    if cur["locked_until"]:  # abgelaufene Sperre: Zähler beginnt neu
+                        conn.execute("UPDATE users SET failed_logins = 0, locked_until = NULL WHERE id = ?",
+                                     (user["id"],))
+                    conn.execute("UPDATE users SET failed_logins = failed_logins + 1 WHERE id = ?", (user["id"],))
+                    failed = dbm.scalar(conn, "SELECT failed_logins FROM users WHERE id = ?", (user["id"],))
+                    if failed >= settings["lockout_attempts"]:
+                        locked_until = timeutil.iso(timeutil.utcnow()
+                                                    + timedelta(minutes=settings["lockout_minutes"]))
+                        conn.execute("UPDATE users SET failed_logins = 0, locked_until = ? WHERE id = ?",
+                                     (locked_until, user["id"]))
                 audit(conn, "login_failed", "session",
                       "Anmeldung fehlgeschlagen (falsches Passwort)" +
                       (" – Konto vorübergehend gesperrt" if locked_until else ""),
@@ -74,6 +79,10 @@ def login():
             user["locked_until"] = locked_until
             raise authm.account_locked_error(user)
         raise ApiError(401, "invalid_credentials", INVALID_MSG)
+    # Während der Passwortprüfung von parallelen Fehlversuchen gesperrt → Sperre gilt auch hier
+    fresh = dbm.row(conn, "SELECT locked_until FROM users WHERE id = ?", (user["id"],))
+    if authm.is_locked(fresh):
+        raise authm.account_locked_error(fresh)
     if not user["is_active"]:
         raise ApiError(403, "account_disabled", "Dieses Konto ist deaktiviert. Bitte an die Administration wenden.")
     _finish_login(conn, user, "hat sich angemeldet")

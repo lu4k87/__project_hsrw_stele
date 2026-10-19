@@ -194,3 +194,16 @@ def test_preview_resolve_unsaved(admin):
 
 def test_preview_requires_view_permission(anon):
     assert anon.post("/api/preview/resolve", json={}).status_code == 401
+
+
+def test_numbers_must_be_finite(admin):
+    """NaN/Infinity lässt der JSON-Parser durch – die Bereichsprüfung darf sie nicht annehmen."""
+    from stelecms.validation import is_number
+    assert [is_number(x) for x in (1, 1.5, float("nan"), float("inf"), True, "1")] == \
+        [True, True, False, False, False, False]
+    p = make_presentation(admin, "P")
+    for raw in ("NaN", "Infinity", "-Infinity"):
+        r = admin.patch(f"/api/presentations/{p['id']}", data='{"settings": {"default_duration_s": %s}}' % raw,
+                        content_type="application/json")
+        assert r.status_code == 422, raw
+        assert "settings.default_duration_s" in r.get_json()["error"]["fields"]

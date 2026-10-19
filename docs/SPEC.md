@@ -524,6 +524,8 @@ Effektive Rechte = gesetzte Rechte ∪ enthaltene (transitiv). Administrator (`i
 - Mindestens **ein aktiver Administrator** muss bleiben (Löschen, Deaktivieren, Rollenwechsel → 409 `last_admin`).
 - Eigenes Konto: nicht löschen, nicht deaktivieren, eigene Rolle nicht ändern (403 `self_protection`).
 - Administrator-Rolle: nicht löschbar, Rechte/Name nicht änderbar (403 `role_locked`).
+- Administrator-Rolle vergeben sowie Konten mit Administrator-Rolle ändern, löschen oder ihr Passwort zurücksetzen: nur durch Administratoren (sonst 403 `forbidden`).
+- Rollen anlegen/ändern ohne `is_admin`: nur Rechte hinzufügen, die das eigene Konto selbst hat (effektiv; sonst 403 `forbidden`) – damit auch die eigene Rolle nicht erweitern.
 - Rolle mit Benutzern nicht löschbar (409 `role_in_use`, `details.user_count`).
 
 ## 7. Admin-API
@@ -560,7 +562,7 @@ Session = {
 }
 ```
 - `dev_login.users` nur, wenn Testbetrieb aktiv **und** Anfrage von Loopback; sonst `{"enabled": false, "users": []}`. `app.test_mode` = `dev_login_enabled`.
-- Login-Fehler immer „Benutzername oder Passwort ist falsch.“ (kein Hinweis, ob der Benutzer existiert). Nach `lockout_attempts` Fehlversuchen → gesperrt für `lockout_minutes` (423). Zusätzlich pro IP max. 20 Versuche / 5 min (429).
+- Login-Fehler immer „Benutzername oder Passwort ist falsch.“ (kein Hinweis, ob der Benutzer existiert). Nach `lockout_attempts` Fehlversuchen → gesperrt für `lockout_minutes` (423). Zusätzlich pro IP max. 20 Versuche / 5 min (429; jeder Versuch zählt, geprüft und gezählt in einem Schritt vor der Passwortprüfung). Fehlversuchszähler atomar in der Schreib-Transaktion.
 - Sitzung: Flask-Session-Cookie `stelecms_session` (HttpOnly, SameSite=Lax; Secure erst mit HTTPS). Inhalt: user_id, session_version, csrf_token, last_active. Leerlauf > `session_idle_minutes` → 401 `unauthenticated` mit `message` „Sitzung abgelaufen – bitte neu anmelden.“
 
 ```json
@@ -595,7 +597,7 @@ Validierung: username 3–32 Zeichen `[a-zA-Z0-9._-]`, eindeutig; display_name 1
 | POST | `/api/contents/upload` (multipart: `files` mehrfach, optional `tags` = JSON-Array) | content.edit | → `{items: [Content], errors: [{file_name, message}]}` |
 | POST | `/api/contents` | content.edit | `{type: "text"|"web", title, tags?, data}` → `Content` |
 | GET | `/api/contents/<id>` | content.view | → `Content` + `usages` |
-| PATCH | `/api/contents/<id>` | content.edit | `{title?, tags?, data?}` (data nur text/web) → `Content` |
+| PATCH | `/api/contents/<id>` | content.edit | `{title?, tags?, data?, expected_updated_at?}` (data nur text/web) → `Content`; 409 `edit_conflict` (§3) |
 | POST | `/api/contents/<id>/duplicate` | content.edit | nur text/web → `Content` |
 | DELETE | `/api/contents/<id>` | content.delete | → `{ok}`; 409 `in_use` mit `details.usages` |
 | POST | `/api/contents/bulk-delete` | content.delete | `{ids}` → `{deleted: [ids], blocked: [{id, title, usages}]}` |
@@ -698,7 +700,7 @@ Hintergrund-Abfragen der UI senden `X-Background-Poll: 1` – sie verlängern di
 | GET | `/api/steles/<id>` | steles.view | → `Stele` (+ `player_url` nur mit steles.manage) |
 | PATCH | `/api/steles/<id>` | steles.manage (nur `default_presentation_id`: auch schedule.edit) | → `Stele` |
 | DELETE | `/api/steles/<id>` | steles.manage | → `{ok}` |
-| POST | `/api/steles/<id>/pair` | steles.manage | `{code}` → `Stele`; 404 „Code unbekannt“, 410 „Code abgelaufen“ |
+| POST | `/api/steles/<id>/pair` | steles.manage | `{code}` → `Stele`; 404 „Code unbekannt“, 410 „Code abgelaufen“; Code bleibt danach noch mind. 2 min gültig (Player holt den Schlüssel ab) |
 | POST | `/api/steles/<id>/rotate-key` | steles.manage | → `Stele` mit neuer `player_url` |
 | POST | `/api/steles/<id>/commands` | steles.control | `{command}` → `{id, command, created_at}` |
 | GET | `/api/steles/<id>/commands?limit=20` | steles.view | → `{items: [{id, command, created_by, created_at, delivered_at, done_at, result}]}` |
@@ -714,7 +716,7 @@ Stele = {
   "status": "online|offline|standby|never",           // standby = Nachtmodus; never = noch nie gemeldet
   "last_seen_at",
   "now": { "presentation": {"id", "name"} | null, "source": "schedule|default|none", "schedule_entry_id",
-           "item": {"id", "title", "content_type"} | null, "mode": "slideshow|touch|standby|pairing" | null },
+           "item": {"id", "title", "content_type"} | null, "mode": "slideshow|touch|standby|idle|pairing" | null },
   "next_change": {"at", "presentation": {"id", "name"} | null} | null,
   "player": {"version", "user_agent", "screen": {"w", "h"}, "manifest_version", "manifest_current": bool, "uptime_s"} | null,
   "network": {"ip_address", "ping_ok": bool|null, "ping_ms", "checked_at"},
@@ -831,7 +833,7 @@ Alle Nachrichten tragen zusätzlich `source: 'stelecms'`.
 - **Schriften:** mitgelieferte per `web/shared/fonts/fonts.css` (im Shell-Cache, offline), hochgeladene per `FontFace` aus `fonts` von Manifest bzw. `render`. Design-Theme → CSS-Variablen der Bühne (`--font-body`, `--font-heading`, `--tx-*`, `--logo-url`); die Info-Folie überschreibt nur gesetzte Werte. Fit-Text misst erst nach dem Laden der Schriften (höchstens 3 s).
 - **Bildunterschrift** (`caption`): unten im Folienbereich, Stil nach `caption_style`, mind. 40 px Schrift.
 - **Fortschrittsbalken** optional (4 px, Akzentfarbe).
-- **Standby** (keine Präsentation / keine gültige Folie): dunkler Hintergrund, `org_name` und Uhrzeit, dezent.
+- **Standby** (keine Präsentation / keine gültige Folie): dunkler Hintergrund, `org_name` und Uhrzeit, dezent; Heartbeat `mode: 'idle'` (Admin: Warnung „Läuft, aber nichts anzuzeigen“, Status bleibt `online`).
 - **Nachtmodus:** schwarz, Videos gestoppt, Heartbeat `mode: 'standby'`.
 
 ### 9.4 Ablauf und Robustheit
@@ -876,7 +878,7 @@ Alle Nachrichten tragen zusätzlich `source: 'stelecms'`.
 
 ```json
 Heartbeat = {
-  "player_version": "1.0.0", "manifest_version": "…", "mode": "slideshow|touch|standby",
+  "player_version": "1.0.0", "manifest_version": "…", "mode": "slideshow|touch|standby|idle",
   "current": {"presentation_id", "item_id", "content_id", "title", "started_at"} | null,
   "screen": {"w", "h"}, "user_agent": "…", "uptime_s": 1234,
   "errors": [{"ts", "message", "item_id"}],            // neu seit letztem Heartbeat (max. 20)

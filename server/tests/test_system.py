@@ -169,6 +169,19 @@ def test_audit_filter_and_csv(admin):
     assert text.startswith("﻿Zeitpunkt;") and "attachment" in r.headers["Content-Disposition"]
 
 
+def test_audit_csv_neutralizes_formulas_in_all_columns(admin):
+    from stelecms.api.audit import _csv_safe
+    assert [_csv_safe(x) for x in ("=1", "+1", "-1", "@A", "\tA", "\rA", "ok", "", None, 7)] == \
+        ["'=1", "'+1", "'-1", "'@A", "'\tA", "'\rA", "ok", "", None, 7]
+    make_text(admin, "=HYPERLINK(\"http://x\")")
+    text = admin.get("/api/audit/export.csv").data.decode("utf-8")
+    import csv
+    rows = list(csv.reader(text.lstrip("\ufeff").splitlines(), delimiter=";"))
+    row = next(r for r in rows if any("HYPERLINK" in c for c in r))
+    assert row[5] == "'=HYPERLINK(\"http://x\")", row  # Spalte „Objekt“
+    assert not any(c[:1] in ("=", "+", "-", "@", "\t", "\r") for c in row), row
+
+
 def test_settings_visibility_and_validation(admin, betrachter):
     assert set(betrachter.get("/api/settings").get_json()) == {"org_name", "timezone", "default_slide_duration_s"}
     full = admin.get("/api/settings").get_json()
@@ -383,3 +396,12 @@ def test_metrics_downsample_covers_whole_range():
     assert out[0]["ts"] == "t00000" and out[-1]["ts"] >= "t00996"   # erster bis letzter Abschnitt
     assert out[0]["disk"] is None and out[0]["ram"] == 50.0
     assert _downsample([]) == []
+
+
+def test_csv_safe_neutralizes_formula_after_separator():
+    from stelecms.api.audit import _csv_safe
+    assert _csv_safe("x,=1+1") == "x,'=1+1"
+    assert _csv_safe("a; @SUM(A1)") == "a; '@SUM(A1)"
+    assert _csv_safe("  =1") == "'  =1"
+    assert _csv_safe("Müller-Lüdenscheidt") == "Müller-Lüdenscheidt"
+    assert _csv_safe(5) == 5

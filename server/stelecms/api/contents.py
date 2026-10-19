@@ -15,7 +15,7 @@ from ..audit import audit, q
 from ..errors import ApiError, conflict
 from ..permissions import require
 from ..validation import Validator, body, is_int, parse_tags
-from .common import arg_int, get_or_404, ok
+from .common import arg_int, check_unchanged, get_or_404, ok
 
 bp = Blueprint("api_contents", __name__, url_prefix="/api/contents")
 
@@ -241,6 +241,8 @@ def update_content(cid: int):
     if changes:
         user = authm.current_user()
         with dbm.transaction(conn):
+            noun = TYPE_LABELS[r["type"]]
+            check_unchanged(conn, "contents", cid, data, f"{noun[0].upper()}{noun[1:]} {q(r['title'])}")
             changes.update({"updated_at": timeutil.now_iso(), "updated_by": user["id"]})
             dbm.update(conn, "contents", cid, changes)
             label = title or r["title"]
@@ -306,9 +308,10 @@ def bulk_delete():
     if not isinstance(ids, list) or not ids or not all(is_int(i) for i in ids):
         raise ApiError(422, "validation_error", "Bitte mindestens einen Inhalt auswählen.",
                        fields={"ids": "Bitte eine Liste von IDs angeben."})
-    idx = media.UsageIndex(conn)
     deleted, blocked, uids = [], [], []
+    # Verwendungen in der Schreib-Transaktion ermitteln (wie beim Einzel-Löschen)
     with dbm.transaction(conn):
+        idx = media.UsageIndex(conn)
         for cid in dict.fromkeys(ids):
             r = dbm.row(conn, "SELECT * FROM contents WHERE id = ?", (cid,))
             if r is None:

@@ -132,7 +132,8 @@ export default async function mount(root, ctx) {
     },
     send: () => {
       const payload = { title: (title.trim() || String(data.fields.title).trim().split('\n')[0]).slice(0, 120), tags, data: clone(data) };
-      return isNew ? api.post('/api/contents', { type: 'text', ...payload }) : api.patch(`/api/contents/${content.id}`, payload);
+      return isNew ? api.post('/api/contents', { type: 'text', ...payload })
+        : api.patch(`/api/contents/${content.id}`, { ...payload, expected_updated_at: content.updated_at });
     },
     onSaved: (res) => {
       ctx.setDirty(false);
@@ -156,6 +157,8 @@ export default async function mount(root, ctx) {
       updateReadHint();
       if (preview) refreshPreview();
     },
+    // 409 edit_conflict: jemand anderes hat gespeichert → Hinweis mit „Neu laden“ statt Überschreiben
+    onReload: isNew ? null : () => { ctx.setDirty(false); ctx.navigate(`/media/text/${content.id}`, { replace: true }); },
   });
   const changed = ed.changed;
 
@@ -488,6 +491,7 @@ export default async function mount(root, ctx) {
   fill(root, page({ wide: true, className: 'ts-page' },
     header,
     roAlert,
+    ed.conflictBox,
     usedAlert,
     h('div', { class: 'ts-layout' }, formRoot, h('aside', { class: 'ts-side' }, previewCard)),
   ));

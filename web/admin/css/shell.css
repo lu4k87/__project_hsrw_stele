@@ -148,6 +148,7 @@
 .stele-pill--online .stele-pill__state, .stele-pill--online .dot { color: var(--success); }
 .stele-pill--offline .stele-pill__state, .stele-pill--offline .dot { color: var(--danger); }
 .stele-pill--standby .stele-pill__state, .stele-pill--standby .dot { color: var(--text-2); }
+.stele-pill--idle .stele-pill__state, .stele-pill--idle .dot { color: var(--warning); }
 
 /* Verbindung zum Server unterbrochen: Störung (rot + Icon + Text), kein Link */
 .conn-pill {

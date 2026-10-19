@@ -8,10 +8,31 @@ import { store } from './store.js';
 const LIMITS = { errors: 100, played: 500, touch: 500, results: 50 };
 const PER_BEAT = { errors: 20, played: 200, touch: 200, results: 50 };
 
+// Laufende Nummer je Eintrag (außerhalb des Eintrags: nicht im Heartbeat, nicht im localStorage). Nach einem
+// erfolgreichen Heartbeat werden nur Einträge bis zur höchsten gesendeten Nummer entfernt – läuft die Warteschlange
+// währenddessen über (älteste fallen vorn heraus), gehen so keine ungesendeten verloren.
+const seqOf = new WeakMap();
+let nextSeq = 1;
+
+function tag(item) {
+  if (!seqOf.has(item)) seqOf.set(item, nextSeq++);
+  return item;
+}
+
 function pushBounded(list, item, max) {
-  list.push(item);
+  list.push(tag(item));
   if (list.length > max) list.splice(0, list.length - max);
 }
+
+function removeSent(list, sent) {
+  if (!sent.length) return;
+  const maxSeq = seqOf.get(sent[sent.length - 1]);
+  let n = 0;
+  while (n < list.length && seqOf.get(list[n]) <= maxSeq) n++;
+  list.splice(0, n);
+}
+
+const loadQueue = (key) => (store.get(key, []) || []).filter((x) => x && typeof x === 'object').map(tag);
 
 export class Telemetry {
   // opts: api, getState() → {manifest_version, mode, current}, onResponse(data, rttMs), onAuthError()
@@ -19,9 +40,9 @@ export class Telemetry {
     this.o = opts;
     this.q = {
       errors: [],
-      played: store.get('pendingPlayed', []) || [],
-      touch: store.get('pendingTouch', []) || [],
-      results: store.get('pendingResults', []) || [],
+      played: loadQueue('pendingPlayed'),
+      touch: loadQueue('pendingTouch'),
+      results: loadQueue('pendingResults'),
     };
     // Statistik aus der Zeit vor dem Neustart ist jetzt im Speicher; gespeicherte Kopie löschen (sonst doppelt)
     store.remove('pendingPlayed');
@@ -79,8 +100,8 @@ export class Telemetry {
     const t0 = performance.now();
     try {
       const res = await this.o.api.post('/api/player/heartbeat', body, { timeoutMs: 10_000 });
-      // Erfolgreich übertragene Einträge entfernen (neue sind inzwischen hinten angehängt).
-      for (const k of Object.keys(take)) this.q[k].splice(0, take[k].length);
+      // Erfolgreich übertragene Einträge entfernen (neue sind inzwischen hinten angehängt, älteste evtl. verdrängt).
+      for (const k of Object.keys(take)) removeSent(this.q[k], take[k]);
       store.set('pendingResults', this.q.results);
       this.online = true;
       this.lastOkAt = Date.now();

@@ -30,7 +30,7 @@ export const COMMANDS = {
 };
 
 const SOURCE_LABEL = { schedule: 'laut Zeitplan', default: 'Standard-Präsentation', none: '' };
-const MODE_LABEL = { slideshow: 'Diashow', touch: 'Touch-Bedienung durch Besucher', standby: 'Nachtmodus', pairing: 'Wartet auf Kopplung' };
+const MODE_LABEL = { slideshow: 'Diashow', touch: 'Touch-Bedienung durch Besucher', standby: 'Nachtmodus', idle: 'Läuft, aber nichts anzuzeigen', pairing: 'Wartet auf Kopplung' };
 
 export const isLive = (s) => s && (s.status === 'online' || s.status === 'standby');
 
@@ -40,6 +40,10 @@ export function nowPlaying(stele, { compact = false } = {}) {
   const live = isLive(stele);
   if (live && n.mode === 'standby') {
     return h('div', { class: 'stele-now' }, icon('moon', { size: 18 }), h('span', {}, h('span', { class: 'stele-now__label' }, 'Nachtmodus: '), 'Bildschirm ist aus'));
+  }
+  if (live && n.mode === 'idle') {
+    return h('div', { class: 'stele-now stele-now--none' }, icon('alert-triangle', { size: 18 }),
+      h('span', {}, h('span', { class: 'stele-now__label' }, `${MODE_LABEL.idle}: `), 'Standbild – Präsentation planen oder Standard-Präsentation setzen'));
   }
   if (!n.presentation) {
     return h('div', { class: 'stele-now stele-now--none' }, icon('alert-triangle', { size: 18 }),

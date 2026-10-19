@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import csv
 import io
+import re
 from datetime import date, timedelta
 
 from flask import Blueprint, Response, jsonify, request
@@ -87,15 +88,23 @@ def export_csv():
     w.writerow(["Zeitpunkt", "Benutzername", "Name", "Aktion", "Bereich", "Objekt", "Objekt-ID", "Beschreibung",
                 "IP-Adresse"])
     for r in rows:
-        w.writerow([timeutil.format_de(r["ts"], tz), r["username"], r["user_display"],
-                    auditm.ACTION_LABELS.get(r["action"], r["action"]),
-                    auditm.ENTITY_LABELS.get(r["entity_type"], r["entity_type"]), r["entity_name"],
-                    "" if r["entity_id"] is None else r["entity_id"], _csv_safe(r["summary"]), r["ip"]])
+        w.writerow([_csv_safe(c) for c in (
+            timeutil.format_de(r["ts"], tz), r["username"], r["user_display"],
+            auditm.ACTION_LABELS.get(r["action"], r["action"]),
+            auditm.ENTITY_LABELS.get(r["entity_type"], r["entity_type"]), r["entity_name"],
+            "" if r["entity_id"] is None else r["entity_id"], r["summary"], r["ip"])])
     stamp = timeutil.local_now(tz).strftime("%Y%m%d-%H%M")
     return Response("﻿" + buf.getvalue(), mimetype="text/csv; charset=utf-8", headers={
         "Content-Disposition": f'attachment; filename="stelecms-protokoll-{stamp}.csv"'})
 
 
-def _csv_safe(value: str) -> str:
-    """Schutz vor Formel-Injektion in Tabellenprogrammen."""
-    return "'" + value if value and value[0] in "=+-@" else value
+_AFTER_SEP = re.compile(r"([,;])(\s*)(?=[=+\-@])")
+
+
+def _csv_safe(value):
+    """Schutz vor Formel-Injektion in Tabellenprogrammen (alle Textspalten): Anfang, auch nach Leerraum
+    oder führendem Tab/CR, und nach Komma/Semikolon (Excel mit anderem Trennzeichen)."""
+    if not isinstance(value, str) or not value:
+        return value
+    value = _AFTER_SEP.sub(r"\1\2'", value)
+    return "'" + value if value.lstrip(" ").startswith(("=", "+", "-", "@", "\t", "\r")) else value
