@@ -521,10 +521,11 @@ Effektive Rechte = gesetzte Rechte ∪ enthaltene (transitiv). Administrator (`i
 (alle `is_demo = 1`, `must_change_password = 0`)
 
 ### 6.3 Schutzregeln
-- Mindestens **ein aktiver Administrator** muss bleiben (Löschen, Deaktivieren, Rollenwechsel → 409 `last_admin`).
+- Mindestens **ein aktiver Administrator** muss bleiben (Löschen, Deaktivieren, Rollenwechsel → 409 `last_admin`; gezählt in derselben Schreib-Transaktion wie die Änderung, damit parallele Anfragen nicht beide durchgehen).
 - Eigenes Konto: nicht löschen, nicht deaktivieren, eigene Rolle nicht ändern (403 `self_protection`).
 - Administrator-Rolle: nicht löschbar, Rechte/Name nicht änderbar (403 `role_locked`).
-- Administrator-Rolle vergeben sowie Konten mit Administrator-Rolle ändern, löschen oder ihr Passwort zurücksetzen: nur durch Administratoren (sonst 403 `forbidden`).
+- Administrator-Rolle vergeben sowie Konten mit Administrator-Rolle ändern, entsperren, löschen oder ihr Passwort zurücksetzen: nur durch Administratoren (sonst 403 `forbidden`).
+- Konten verwalten ohne `is_admin` (anlegen, ändern, deaktivieren, entsperren, Passwort zurücksetzen, löschen): nur, wenn das eigene Konto alle effektiven Rechte der Rolle des Kontos selbst hat – beim Anlegen und Rollenwechsel auch die der neuen Rolle (sonst 403 `forbidden`, fehlende Rechte in `message` und `details.missing_permissions`). Damit lässt sich kein mächtigeres Konto per Passwort-Reset übernehmen. Ziel-Konto und Prüfung werden in der Schreib-Transaktion wiederholt; haben sich Rolle oder Aktiv-Status eines Kontos seit dem Laden geändert, lehnt `PATCH /api/users/<id>` mit 409 `stale` ab.
 - Rollen anlegen/ändern ohne `is_admin`: nur Rechte hinzufügen, die das eigene Konto selbst hat (effektiv; sonst 403 `forbidden`) – damit auch die eigene Rolle nicht erweitern.
 - Rolle mit Benutzern nicht löschbar (409 `role_in_use`, `details.user_count`).
 
@@ -534,7 +535,7 @@ Effektive Rechte = gesetzte Rechte ∪ enthaltene (transitiv). Administrator (`i
 - JSON rein/raus (`application/json; charset=utf-8`), IDs sind Integer.
 - Listen: `{"items": [...], "total": n}`.
 - Fehler: HTTP-Status + `{"error": {"code": "…", "message": "Deutscher Satz für Menschen", "fields": {"feld": "Meldung"}, "details": {…}}}`.
-  Codes: `unauthenticated` 401 · `invalid_credentials` 401 · `forbidden` 403 · `account_disabled` 403 · `self_protection` 403 · `role_locked` 403 · `not_found` 404 · `conflict`/`in_use`/`last_admin`/`role_in_use`/`edit_conflict`/`changed_since_review` 409 · `expired` 410 · `too_large` 413 · `unsupported_media` 415 · `validation_error` 422 · `account_locked` 423 (`details.retry_after_s`) · `rate_limited` 429 · `server_error` 500 · `insufficient_storage` 507.
+  Codes: `unauthenticated` 401 · `invalid_credentials` 401 · `forbidden` 403 · `account_disabled` 403 · `self_protection` 403 · `role_locked` 403 · `not_found` 404 · `conflict`/`in_use`/`last_admin`/`role_in_use`/`edit_conflict`/`changed_since_review`/`stale` 409 · `expired` 410 · `too_large` 413 · `unsupported_media` 415 · `validation_error` 422 · `account_locked` 423 (`details.retry_after_s`) · `rate_limited` 429 · `server_error` 500 · `insufficient_storage` 507.
 - Personen-Verweis überall: `{"id": 1, "display_name": "Alex Admin"}` oder `null`.
 - **CSRF:** alle ändernden Methoden auf `/api/` (außer `/api/auth/login`, `/api/auth/dev-login`, `/api/player/*`, `/api/agent/*`) brauchen Header `X-CSRF-Token` = Token aus der Sitzung; sonst 403 `forbidden` („Sicherheitsprüfung fehlgeschlagen – Seite neu laden“).
 - Jede ändernde Aktion schreibt einen Protokolleintrag (§4 audit_log).
@@ -562,7 +563,7 @@ Session = {
 }
 ```
 - `dev_login.users` nur, wenn Testbetrieb aktiv **und** Anfrage von Loopback; sonst `{"enabled": false, "users": []}`. `app.test_mode` = `dev_login_enabled`.
-- Login-Fehler immer „Benutzername oder Passwort ist falsch.“ (kein Hinweis, ob der Benutzer existiert). Nach `lockout_attempts` Fehlversuchen → gesperrt für `lockout_minutes` (423). Zusätzlich pro IP max. 20 Versuche / 5 min (429; jeder Versuch zählt, geprüft und gezählt in einem Schritt vor der Passwortprüfung). Fehlversuchszähler atomar in der Schreib-Transaktion.
+- Login-Fehler immer „Benutzername oder Passwort ist falsch.“ (kein Hinweis, ob der Benutzer existiert). Nach `lockout_attempts` Fehlversuchen → gesperrt für `lockout_minutes` (423). Zusätzlich pro IP max. 20 Versuche / 5 min (429; jeder Versuch zählt, geprüft und gezählt in einem Schritt vor der Passwortprüfung). Fehlversuchszähler atomar in der Schreib-Transaktion. Nach richtigem Passwort wird die Sperre in derselben Schreib-Transaktion geprüft, die den Zähler zurücksetzt (parallel gesetzte Sperre → 423, Abweisung als `login_failed` protokolliert).
 - Sitzung: Flask-Session-Cookie `stelecms_session` (HttpOnly, SameSite=Lax; Secure erst mit HTTPS). Inhalt: user_id, session_version, csrf_token, last_active. Leerlauf > `session_idle_minutes` → 401 `unauthenticated` mit `message` „Sitzung abgelaufen – bitte neu anmelden.“
 
 ```json

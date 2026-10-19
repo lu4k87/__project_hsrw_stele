@@ -111,6 +111,15 @@ def test_lock_set_during_password_check_blocks_login(app, anon, monkeypatch):
     monkeypatch.setattr(api_auth, "check_password", locked_meanwhile)
     r = anon.post("/api/auth/login", json={"username": "autor", "password": "autor123"})
     assert r.status_code == 423 and r.get_json()["error"]["code"] == "account_locked"
+    # Sperre bleibt bestehen, die Abweisung steht im Protokoll, keine Anmeldung protokolliert
+    conn = dbm.connect(app.config["DB_PATH"])
+    try:
+        assert conn.execute("SELECT locked_until FROM users WHERE username = 'autor'").fetchone()[0]
+        actions = [r[0] for r in conn.execute("SELECT action FROM audit_log WHERE entity_name = 'autor' "
+                                              "AND entity_type = 'session' ORDER BY id")]
+    finally:
+        conn.close()
+    assert actions == ["login_failed"]
 
 
 def test_dev_login_loopback_only(app):

@@ -2,7 +2,7 @@
 // Schutzregeln (SPEC §6.3) werden vorab erklärt und die betroffenen Aktionen deaktiviert; der Server prüft zusätzlich.
 import { h, useStyles, initials, mount as fill } from '../dom.js';
 import { api, ApiError, errorMessage } from '../api.js';
-import { can, session } from '../session.js';
+import { can, isAdmin, session } from '../session.js';
 import { icon } from '../icons.js';
 import { formatRelative, formatDateTime, plural } from '../format.js';
 import { page, pageHeader, card, button } from '../ui/page.js';
@@ -50,6 +50,9 @@ export default async function mount(root, ctx) {
   const activeAdmins = () => state.users.filter((u) => u.role?.is_admin && u.is_active).length;
   const isLastAdmin = (u) => u.role?.is_admin && u.is_active && activeAdmins() <= 1;
   const roleById = (id) => state.roles.find((r) => r.id === id);
+  // §6.3: ohne Administrator-Rolle nur Rollen vergeben und Konten verwalten, deren Rechte das eigene Konto selbst hat
+  const coversRole = (r) => isAdmin() || (!!r && !r.is_admin && (r.effective_permissions || []).every((p) => session.permissions.has(p)));
+  const canManage = (u) => manage && coversRole(roleById(u.role?.id));
 
   const table = dataTable({
     caption: 'Benutzer',
@@ -68,7 +71,7 @@ export default async function mount(root, ctx) {
       { key: 'status', label: 'Status', sortable: true, sortValue: (u) => (!u.is_active ? 2 : u.locked ? 1 : 0), render: (u) => h('span', { class: 'cluster', style: { '--cluster-gap': '6px' } }, userStatus(u),
         u.must_change_password && u.is_active ? chip('info', 'Passwortwechsel offen', 'key', { size: 'sm' }) : null) },
       { key: 'last_login_at', label: 'Letzte Anmeldung', sortable: true, render: (u) => (u.last_login_at ? h('time', { datetime: u.last_login_at, title: formatDateTime(u.last_login_at) }, formatRelative(u.last_login_at)) : h('span', { class: 'text-2' }, 'noch nie')) },
-      { key: 'actions', label: 'Aktionen', align: 'actions', headerHidden: true, render: (u) => button({ label: manage ? 'Bearbeiten' : 'Ansehen', size: 'sm', variant: 'ghost', icon: manage ? 'pencil' : 'eye', ariaLabel: `${u.display_name} ${manage ? 'bearbeiten' : 'ansehen'}`, onClick: () => openEdit(u) }) },
+      { key: 'actions', label: 'Aktionen', align: 'actions', headerHidden: true, render: (u) => { const m = canManage(u); return button({ label: m ? 'Bearbeiten' : 'Ansehen', size: 'sm', variant: 'ghost', icon: m ? 'pencil' : 'eye', ariaLabel: `${u.display_name} ${m ? 'bearbeiten' : 'ansehen'}`, onClick: () => openEdit(u) }); } },
     ],
     empty: () => emptyState({ icon: 'search', title: 'Kein Benutzer gefunden', text: 'Keine Konten passen zu Suche und Filtern.', actions: [button({ label: 'Filter zurücksetzen', onClick: resetFilters })] }),
   });
@@ -119,7 +122,8 @@ export default async function mount(root, ctx) {
 
   function roleSelect(value, { disabled = false } = {}) {
     const desc = h('div', { class: 'field__hint usr-roledesc' });
-    const sel = select({ value, disabled, options: state.roles.map((r) => ({ value: r.id, label: r.name })), onChange: () => sync() });
+    const roles = disabled ? state.roles : state.roles.filter(coversRole);
+    const sel = select({ value, disabled, options: roles.map((r) => ({ value: r.id, label: r.name })), onChange: () => sync() });
     function sync() {
       const r = roleById(Number(sel.value));
       fill(desc, r ? (r.is_admin ? 'Darf alles, auch Benutzer, Rollen und Systemeinstellungen verwalten.' : (r.description || `${plural((r.effective_permissions || r.permissions || []).length, 'Recht', 'Rechte')}.`)) : '');
@@ -150,7 +154,8 @@ export default async function mount(root, ctx) {
     const username = input({ maxLength: 32, autocomplete: 'off', spellcheck: 'false', placeholder: 'z. B. m.muster' });
     const displayName = input({ maxLength: 80, autocomplete: 'off', placeholder: 'z. B. Maria Muster' });
     const email = input({ type: 'email', maxLength: 120, autocomplete: 'off' });
-    const defaultRole = state.roles.find((r) => !r.is_admin && /betrachter/i.test(r.name)) || state.roles.find((r) => !r.is_admin) || state.roles[0];
+    const grantable = state.roles.filter(coversRole);
+    const defaultRole = grantable.find((r) => !r.is_admin && /betrachter/i.test(r.name)) || grantable.find((r) => !r.is_admin) || grantable[0];
     const { sel: roleSel, desc } = roleSelect(defaultRole?.id ?? '');
     const pw = input({ type: 'password', autocomplete: 'new-password', maxLength: 128 });
     const pwField = field({ label: 'Startpasswort', control: pw, required: true, name: 'password', hint: 'Mindestlänge laut Sicherheitseinstellungen (Standard 8 Zeichen).' });
@@ -206,14 +211,15 @@ export default async function mount(root, ctx) {
   function openEdit(u) {
     const self = u.id === me;
     const lastAdmin = isLastAdmin(u);
-    const ro = !manage;
+    const ro = !canManage(u);
     const displayName = input({ value: u.display_name, maxLength: 80, disabled: ro });
     const email = input({ type: 'email', value: u.email || '', maxLength: 120, disabled: ro });
     const roleLocked = ro || self || lastAdmin;
     const { sel: roleSel, desc } = roleSelect(u.role?.id, { disabled: roleLocked });
     const active = switchToggle({ label: 'Konto aktiv', hint: 'Deaktivierte Konten können sich nicht anmelden; laufende Sitzungen enden.', checked: !!u.is_active, disabled: ro || self || lastAdmin });
     const why = (text) => h('p', { class: 'usr-why' }, icon('lock', { size: 16 }), text);
-    const protection = self ? 'Das eigene Konto kann weder deaktiviert noch gelöscht werden, und die eigene Rolle lässt sich nicht ändern. Das kann nur eine andere Person mit Administratorrechten.'
+    const protection = manage && ro ? 'Dieses Konto hat Rechte, die Ihr eigenes Konto nicht hat. Ändern, entsperren, zurücksetzen oder löschen kann es nur, wer diese Rechte selbst hat oder Administrator ist.'
+      : self ? 'Das eigene Konto kann weder deaktiviert noch gelöscht werden, und die eigene Rolle lässt sich nicht ändern. Das kann nur eine andere Person mit Administratorrechten.'
       : lastAdmin ? 'Dies ist das letzte aktive Konto mit der Rolle Administrator. Es muss immer mindestens eines geben – daher sind Rollenwechsel, Deaktivieren und Löschen gesperrt.' : null;
 
     const form = h('form', { class: 'form', novalidate: true },
@@ -234,7 +240,7 @@ export default async function mount(root, ctx) {
         active));
 
     const dangerZone = h('div', { class: 'form-section' });
-    if (manage) {
+    if (!ro) {
       const lockBlock = u.locked ? h('div', { class: 'alert alert--danger' }, icon('lock'), h('div', { class: 'alert__body' },
         h('div', { class: 'alert__title' }, 'Konto vorübergehend gesperrt'),
         h('div', { class: 'alert__text' }, `Nach zu vielen Fehlversuchen${u.locked_until ? ` bis ${formatDateTime(u.locked_until)}` : ''}.`),
@@ -255,10 +261,10 @@ export default async function mount(root, ctx) {
     form.addEventListener('change', () => { dirty = true; });
     const d = openDrawer({
       title: u.display_name,
-      description: manage ? 'Konto bearbeiten' : 'Konto ansehen',
+      description: ro ? 'Konto ansehen' : 'Konto bearbeiten',
       width: '520px',
       content: form,
-      actions: manage ? [
+      actions: !ro ? [
         { label: 'Abbrechen', value: null },
         { label: 'Änderungen speichern', variant: 'primary', icon: 'save', onClick: async () => {
           if (!dirty) return true;
@@ -271,7 +277,7 @@ export default async function mount(root, ctx) {
           if (!(self || lastAdmin) && active.input.checked !== !!u.is_active) body.is_active = active.input.checked;
           try { await api.patch(`/api/users/${u.id}`, body); } catch (err) {
             if (err instanceof ApiError && Object.keys(err.fields || {}).length) { setFieldErrors(form, err.fields); return false; }
-            if (err instanceof ApiError && ['last_admin', 'self_protection'].includes(err.code)) { toast.warning(err.message); return false; }
+            if (err instanceof ApiError && ['last_admin', 'self_protection', 'stale'].includes(err.code)) { toast.warning(err.message); return false; }
             throw err;
           }
           toast.success('Änderungen gespeichert.');
@@ -283,7 +289,7 @@ export default async function mount(root, ctx) {
     // Schließen mit ungespeicherten Änderungen: nachfragen
     const origClose = d.close;
     d.close = async (result = null) => {
-      if (result === null && dirty && manage) {
+      if (result === null && dirty && !ro) {
         const ok = await confirmDialog({ title: 'Änderungen verwerfen?', message: 'Die Änderungen an diesem Konto sind noch nicht gespeichert.', confirmLabel: 'Verwerfen', cancelLabel: 'Weiter bearbeiten', danger: true, icon: 'undo' });
         if (!ok) return;
       }

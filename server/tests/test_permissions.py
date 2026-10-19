@@ -128,9 +128,12 @@ def test_self_protection(admin):
 
 
 def test_admin_accounts_and_role_only_by_admins(admin, app):
-    """users.manage allein reicht nicht für Administrator-Konten und die Administrator-Rolle (§6.3)."""
+    """users.manage reicht nie für Administrator-Konten und die Administrator-Rolle (§6.3) – auch nicht, wenn das
+    Konto die Rechte der Rolle Autor mitbringt und Autor-Konten deshalb verwalten darf."""
     roles = _roles(admin)
-    hr_role = admin.post("/api/roles", json={"name": "Personal", "permissions": ["users.manage"]}).get_json()
+    hr_role = admin.post("/api/roles", json={"name": "Personal", "permissions": [
+        "users.manage", "monitoring.view", "content.edit", "presentations.edit", "schedule.view",
+        "steles.view"]}).get_json()
     admin.post("/api/users", json={"username": "personal", "display_name": "HR", "role_id": hr_role["id"],
                                    "password": "personal123", "must_change_password": False})
     hr = Client(app).login("personal", "personal123")
@@ -151,14 +154,108 @@ def test_admin_accounts_and_role_only_by_admins(admin, app):
     assert after["admin"]["is_active"] and after["admin"]["display_name"] == "Alex Admin"
     assert after["autor"]["role"]["name"] == "Autor" and "chef2" not in after
     Client(app).login("admin", "admin123")  # Passwort unverändert
-    # Normale Konten verwaltet HR weiter
+    # Konten, deren Rechte HR selbst hat, verwaltet HR weiter
     assert hr.patch(f"/api/users/{autor_id}", json={"role_id": roles["Betrachter"]}).status_code == 200
     assert hr.post(f"/api/users/{autor_id}/password", json={}).status_code == 200
+    # … aber keine Rolle mit mehr Rechten vergeben und kein Redaktions-Konto übernehmen
+    r = hr.patch(f"/api/users/{autor_id}", json={"role_id": roles["Redaktion"]})
+    assert r.status_code == 403 and "presentations.publish" in r.get_json()["error"]["details"]["missing_permissions"]
+    r = hr.post(f"/api/users/{users['redaktion']['id']}/password", json={})
+    assert r.status_code == 403 and r.get_json()["error"]["code"] == "forbidden"
+    Client(app).login("redaktion", "redaktion123")  # Passwort unverändert
     # Administratoren dürfen es
     r = admin.post("/api/users", json={"username": "chefin", "display_name": "Chefin",
                                        "role_id": roles["Administrator"], "password": "chefin12345"})
     assert r.status_code == 201
     assert admin.patch(f"/api/users/{r.get_json()['user']['id']}", json={"is_active": False}).status_code == 200
+
+
+def test_users_manage_only_accounts_with_own_permissions(admin, app):
+    """Ohne Administrator-Rolle nur Konten verwalten und Rollen vergeben, deren effektive Rechte das eigene Konto
+    selbst hat (§6.3) – sonst ließe sich ein mächtigeres Konto per Passwort-Reset übernehmen."""
+    roles = _roles(admin)
+    hr_role = admin.post("/api/roles", json={"name": "Nur Personal", "permissions": ["users.manage"]}).get_json()
+    admin.post("/api/users", json={"username": "personal", "display_name": "HR", "role_id": hr_role["id"],
+                                   "password": "personal123", "must_change_password": False})
+    hr = Client(app).login("personal", "personal123")
+    users = _users(admin)
+    autor_id = users["autor"]["id"]
+    for method, url, payload in (
+            ("DELETE", f"/api/users/{autor_id}", None),
+            ("PATCH", f"/api/users/{autor_id}", {"display_name": "Übernommen"}),
+            ("PATCH", f"/api/users/{autor_id}", {"is_active": False}),
+            ("POST", f"/api/users/{autor_id}/password", {"password": "uebernommen123"}),
+            ("POST", f"/api/users/{autor_id}/unlock", None),
+            ("POST", "/api/users", {"username": "neu.autor", "display_name": "Neu", "role_id": roles["Autor"],
+                                    "password": "neuautor123"})):
+        r = hr.open(method, url, json=payload)
+        err = r.get_json()["error"]
+        assert r.status_code == 403 and err["code"] == "forbidden", (method, url, payload)
+        assert "content.edit" in err["details"]["missing_permissions"] and "content.edit" in err["message"]
+    after = _users(admin)
+    assert after["autor"]["display_name"] == "Arne Autor" and after["autor"]["is_active"]
+    assert "neu.autor" not in after
+    Client(app).login("autor", "autor123")  # Passwort unverändert
+    # Konten mit einer Rolle, deren Rechte HR selbst hat: anlegen, ändern, zurücksetzen, löschen
+    lesen = admin.post("/api/roles", json={"name": "Benutzer lesen", "permissions": ["users.view"]}).get_json()
+    r = hr.post("/api/users", json={"username": "leser", "display_name": "Leser", "role_id": lesen["id"]})
+    assert r.status_code == 201
+    uid = r.get_json()["user"]["id"]
+    assert hr.patch(f"/api/users/{uid}", json={"display_name": "Lea Leser"}).status_code == 200
+    assert hr.post(f"/api/users/{uid}/password", json={}).status_code == 200
+    assert hr.post(f"/api/users/{uid}/unlock").status_code == 200
+    r = hr.patch(f"/api/users/{uid}", json={"role_id": roles["Betrachter"]})  # neue Rolle hat mehr Rechte
+    assert r.status_code == 403 and "content.view" in r.get_json()["error"]["details"]["missing_permissions"]
+    assert hr.delete(f"/api/users/{uid}").status_code == 200
+
+
+def test_users_manage_rechecks_target_in_transaction(admin, app, monkeypatch):
+    """Ziel-Konto wird in der Schreib-Transaktion neu gelesen (CWE-367): bekommt es zwischen Prüfung und
+    Schreiben die Rolle Administrator, greift weder Passwort-Reset noch Änderung."""
+    from stelecms import db as dbm
+    from stelecms.api import users as api_users
+
+    roles = _roles(admin)
+    hr_role = admin.post("/api/roles", json={"name": "Nur Personal", "permissions": ["users.manage"]}).get_json()
+    lesen = admin.post("/api/roles", json={"name": "Benutzer lesen", "permissions": ["users.view"]}).get_json()
+    admin.post("/api/users", json={"username": "personal", "display_name": "HR", "role_id": hr_role["id"],
+                                   "password": "personal123", "must_change_password": False})
+    tid = admin.post("/api/users", json={"username": "ziel", "display_name": "Ziel", "role_id": lesen["id"],
+                                         "password": "ziel12345", "must_change_password": False}
+                     ).get_json()["user"]["id"]
+    hr = Client(app).login("personal", "personal123")
+    real_load, calls = api_users._load, []
+
+    def promoted_after_check(conn, uid):
+        user = real_load(conn, uid)
+        if not calls:  # nach dem ersten Lesen (frühe Prüfung) parallel zum Administrator machen
+            other = dbm.connect(app.config["DB_PATH"])
+            other.execute("UPDATE users SET role_id = ? WHERE id = ?", (roles["Administrator"], uid))
+            other.commit()
+            other.close()
+        calls.append(uid)
+        return user
+
+    def reset_role():
+        calls.clear()
+        other = dbm.connect(app.config["DB_PATH"])
+        other.execute("UPDATE users SET role_id = ? WHERE id = ?", (lesen["id"], tid))
+        other.commit()
+        other.close()
+
+    monkeypatch.setattr(api_users, "_load", promoted_after_check)
+    r = hr.post(f"/api/users/{tid}/password", json={"password": "uebernommen123"})
+    assert r.status_code == 403 and r.get_json()["error"]["code"] == "forbidden"
+    reset_role()
+    r = hr.patch(f"/api/users/{tid}", json={"display_name": "Übernommen"})
+    assert r.status_code == 409 and r.get_json()["error"]["code"] == "stale"
+    reset_role()
+    r = hr.delete(f"/api/users/{tid}")
+    assert r.status_code == 403 and r.get_json()["error"]["code"] == "forbidden"
+    monkeypatch.undo()
+    reset_role()
+    assert _users(admin)["ziel"]["display_name"] == "Ziel"
+    Client(app).login("ziel", "ziel12345")  # Passwort unverändert
 
 
 def test_roles_grant_only_own_permissions(admin, app):

@@ -79,13 +79,9 @@ def login():
             user["locked_until"] = locked_until
             raise authm.account_locked_error(user)
         raise ApiError(401, "invalid_credentials", INVALID_MSG)
-    # Während der Passwortprüfung von parallelen Fehlversuchen gesperrt → Sperre gilt auch hier
-    fresh = dbm.row(conn, "SELECT locked_until FROM users WHERE id = ?", (user["id"],))
-    if authm.is_locked(fresh):
-        raise authm.account_locked_error(fresh)
     if not user["is_active"]:
         raise ApiError(403, "account_disabled", "Dieses Konto ist deaktiviert. Bitte an die Administration wenden.")
-    _finish_login(conn, user, "hat sich angemeldet")
+    _finish_login(conn, user, "hat sich angemeldet", check_lock=True)
     return jsonify(authm.session_payload(conn))
 
 
@@ -108,12 +104,26 @@ def dev_login():
     return jsonify(authm.session_payload(conn))
 
 
-def _finish_login(conn, user: dict, summary: str) -> None:
+def _finish_login(conn, user: dict, summary: str, check_lock: bool = False) -> None:
+    """check_lock: Sperre in derselben Schreib-Transaktion prüfen wie das Zurücksetzen des Zählers – sonst
+    hebt eine richtige Anmeldung eine Sperre auf, die parallele Fehlversuche während der Passwortprüfung
+    gesetzt haben."""
     now = timeutil.now_iso()
+    locked = None
     with dbm.transaction(conn):
-        conn.execute("UPDATE users SET failed_logins = 0, locked_until = NULL, last_login_at = ? WHERE id = ?",
-                     (now, user["id"]))
-        audit(conn, "login", "session", summary, entity_id=user["id"], entity_name=user["username"], user=user)
+        if check_lock:
+            cur = dbm.row(conn, "SELECT locked_until FROM users WHERE id = ?", (user["id"],))
+            if authm.is_locked(cur):
+                locked = cur
+                audit(conn, "login_failed", "session", "Anmeldung abgewiesen (Konto vorübergehend gesperrt)",
+                      entity_id=user["id"], entity_name=user["username"],
+                      user={"id": user["id"], "username": user["username"], "display_name": user["display_name"]})
+        if locked is None:
+            conn.execute("UPDATE users SET failed_logins = 0, locked_until = NULL, last_login_at = ? WHERE id = ?",
+                         (now, user["id"]))
+            audit(conn, "login", "session", summary, entity_id=user["id"], entity_name=user["username"], user=user)
+    if locked is not None:  # erst nach dem Commit: der Protokolleintrag bleibt
+        raise authm.account_locked_error(locked)
     authm.start_session(user)
     # Für die Antwort sofort als angemeldet behandeln
     fresh = authm.load_user(conn, user["id"])
